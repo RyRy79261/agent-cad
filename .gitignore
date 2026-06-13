@@ -1,0 +1,48 @@
+# ---- Node / JS ----
+node_modules/
+.pnpm-store/
+.next/
+out/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+coverage/
+.eslintcache
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.uv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# ---- Env / secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- OS / editor ----
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.shared.json
+
+# ---- Generated CAD/print artifacts ----
+# Source of truth is the parametric .py + params.json; geometry is reproducible
+# output and is regenerated on demand. Only known-good prints are committed
+# explicitly (see docs/git-strategy in README). Everything else stays ignored.
+projects/**/artifacts/
+scratch/
+*.gcode.3mf
+tmp/
+.cad-cache/

@@ -1,0 +1,29 @@
+{
+  "name": "@agent-cad/web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Next.js + shadcn control panel (shell; built out in the UI pass).",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf .next .turbo *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@agent-cad/types": "workspace:*",
+    "@agent-cad/ui": "workspace:*",
+    "@agent-cad/viewer": "workspace:*",
+    "next": "^14.2.15",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "typescript": "^5.7.3"
+  }
+}

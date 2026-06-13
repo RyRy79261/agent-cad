@@ -1,0 +1,44 @@
+# uv workspace root for the Python side of the monorepo.
+#
+# The CAD / slice / scan / api services live under services/* and are managed
+# as a single uv workspace (one shared lockfile + .venv). Run `uv sync` from the
+# repo root to install everything, then `uv run --package <name> ...`.
+
+[project]
+name = "agent-cad-workspace"
+version = "0.0.0"
+description = "Workspace root for the agent-cad Python services."
+requires-python = ">=3.11"
+# The root is a virtual aggregator; real code lives in the workspace members.
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "httpx>=0.27",
+]
+
+[tool.uv.workspace]
+members = ["services/*"]
+
+[tool.uv.sources]
+cad = { workspace = true }
+slicer = { workspace = true }
+scanner = { workspace = true }
+apiserver = { workspace = true }
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["services"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["services"]
+pythonpath = []
