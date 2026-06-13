@@ -63,20 +63,18 @@ def build(params: dict[str, Any] | None = None) -> Part:
 
         if hole_dia > 0:
             # Holes through the horizontal flange (drilled down Z, near the far end).
-            with Locations((length - inset, 0, t / 2)):
-                with GridLocations(0, y_span, 1, n):
-                    Cylinder(hole_dia / 2, t * 3, mode=Mode.SUBTRACT)
+            with Locations((length - inset, 0, t / 2)), GridLocations(0, y_span, 1, n):
+                Cylinder(hole_dia / 2, t * 3, mode=Mode.SUBTRACT)
 
             # Holes through the vertical flange (drilled along X, near the top).
-            with Locations((t / 2, 0, height - inset)):
-                with GridLocations(0, y_span, 1, n):
-                    Cylinder(
-                        hole_dia / 2,
-                        t * 3,
-                        rotation=(0, 90, 0),  # lay the bore along X
-                        align=(Align.CENTER, Align.CENTER, Align.CENTER),
-                        mode=Mode.SUBTRACT,
-                    )
+            with Locations((t / 2, 0, height - inset)), GridLocations(0, y_span, 1, n):
+                Cylinder(
+                    hole_dia / 2,
+                    t * 3,
+                    rotation=(0, 90, 0),  # lay the bore along X
+                    align=(Align.CENTER, Align.CENTER, Align.CENTER),
+                    mode=Mode.SUBTRACT,
+                )
 
     return bracket.part
 

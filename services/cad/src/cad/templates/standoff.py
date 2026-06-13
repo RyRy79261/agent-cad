@@ -28,8 +28,8 @@ DESCRIPTION = "Round or hex standoff / spacer pillar with a central through bore
 
 PARAMS: dict[str, dict[str, Any]] = {
     "height": {"default": 20.0, "min": 2.0, "max": 280.0, "unit": "mm", "desc": "Pillar height"},
-    "outer_diameter": {"default": 10.0, "min": 4.0, "max": 80.0, "unit": "mm", "desc": "Outer diameter / hex across-corners"},
-    "bore_diameter": {"default": 3.2, "min": 0.0, "max": 60.0, "unit": "mm", "desc": "Through-bore diameter (0 = solid)"},
+    "outer_diameter": {"default": 10.0, "min": 4.0, "max": 80.0, "unit": "mm", "desc": "Outer diameter"},
+    "bore_diameter": {"default": 3.2, "min": 0.0, "max": 60.0, "unit": "mm", "desc": "Bore diameter (0=solid)"},
     "hex": {"default": False, "unit": "bool", "desc": "Hex body instead of round"},
 }
 
