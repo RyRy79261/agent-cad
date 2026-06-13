@@ -7,6 +7,8 @@ dependencies = [
     # Primary code-CAD engine: build123d (Pythonic, OCCT B-rep kernel).
     "build123d>=0.7",
     "numpy>=1.26",
+    # Mesh-level printability checks (watertight/manifold) on the exported STL.
+    "trimesh>=4.4",
 ]
 
 [project.optional-dependencies]

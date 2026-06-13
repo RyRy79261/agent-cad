@@ -17,6 +17,7 @@ class BuildRequest(BaseModel):
     out_dir: str | None = None
     name: str | None = None
     formats: list[str] = Field(default_factory=lambda: ["stl", "step", "3mf", "svg"])
+    verify: bool = Field(default=False, description="Run printability checks on the result.")
 
 
 class OrcaSliceRequest(BaseModel):

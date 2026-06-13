@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from cad.printer import fits
+
 # Formats we know how to export. STEP/BREP require a B-rep engine (build123d /
 # CadQuery); STL/3MF work for either.
 DEFAULT_FORMATS = ("stl", "step", "3mf", "svg")
@@ -41,6 +43,7 @@ class BuildResult:
     model_path: str
     artifacts: dict[str, str] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
+    verification: dict[str, Any] | None = None
     stdout: str = ""
     stderr: str = ""
     error: str | None = None
@@ -52,6 +55,7 @@ class BuildResult:
             "model_path": self.model_path,
             "artifacts": self.artifacts,
             "metadata": self.metadata,
+            "verification": self.verification,
             "stdout": self.stdout,
             "stderr": self.stderr,
             "error": self.error,
@@ -76,12 +80,16 @@ def build_model(
     name: str | None = None,
     formats: tuple[str, ...] = DEFAULT_FORMATS,
     view_origin: tuple[float, float, float] = DEFAULT_VIEW_ORIGIN,
+    verify: bool = False,
 ) -> BuildResult:
     """Run ``model_path`` headlessly and export the requested ``formats``.
 
     Never raises for *modelling* errors: a failed build returns ``ok=False`` with
     the traceback in ``.error`` so the agent can iterate. (It may still raise for
     truly exceptional I/O problems.)
+
+    When ``verify`` is set, the built part is also run through the printability
+    checks (see ``cad.verify``) and the verdict is attached as ``.verification``.
     """
     model_path = Path(model_path).resolve()
     params = params or {}
@@ -96,6 +104,13 @@ def build_model(
             out_dir.mkdir(parents=True, exist_ok=True)
             artifacts = _export(shape, out_dir, name, formats, engine, view_origin)
             metadata = _metadata(shape, engine)
+            verification = None
+            if verify:
+                from cad.verify import verify_build
+
+                verification = verify_build(
+                    shape, engine, metadata, stl_path=artifacts.get("stl")
+                ).to_dict()
     except Exception:  # noqa: BLE001 - we deliberately surface every failure
         return BuildResult(
             ok=False,
@@ -110,6 +125,7 @@ def build_model(
         model_path=str(model_path),
         artifacts={k: str(v) for k, v in artifacts.items()},
         metadata=metadata,
+        verification=verification,
         stdout=out.getvalue(),
         stderr=err.getvalue(),
         engine=engine,
@@ -256,9 +272,21 @@ def _metadata(shape: Any, engine: str) -> dict[str, Any]:
             bb = shape.bounding_box()
             size = {"x": bb.size.X, "y": bb.size.Y, "z": bb.size.Z}
             volume = getattr(shape, "volume", None)
-        return {
-            "bounding_box_mm": {k: round(v, 4) for k, v in size.items()},
+        bbox = {k: round(v, 4) for k, v in size.items()}
+        meta: dict[str, Any] = {
+            "bounding_box_mm": bbox,
             "volume_mm3": round(volume, 4) if volume is not None else None,
         }
+        # Check the part against the target machine's build volume so the agent
+        # (and the UI) learn immediately when a part won't fit the bed.
+        fit = fits(bbox)
+        meta.update(
+            printer=fit.printer,
+            build_volume_mm=fit.build_volume_mm,
+            fits_build_volume=fit.fits,
+            build_volume_overflow_mm=fit.overflow_mm,
+            requires_rotation=fit.requires_rotation,
+        )
+        return meta
     except Exception:  # noqa: BLE001 - metadata is best-effort
         return {}

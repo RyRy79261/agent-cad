@@ -42,6 +42,10 @@ Thumbs.db
 # output and is regenerated on demand. Only known-good prints are committed
 # explicitly (see docs/git-strategy in README). Everything else stays ignored.
 projects/**/artifacts/
+# Any model built in place (e.g. the packaged examples) also writes ./artifacts/.
+**/artifacts/
+# API-served build output (StaticFiles mount at /artifacts).
+.agent-cad-builds/
 scratch/
 *.gcode.3mf
 tmp/

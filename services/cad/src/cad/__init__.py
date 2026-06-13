@@ -6,6 +6,23 @@ manufacturing geometry (STL/STEP/3MF) plus an SVG projection for the agent's
 "generate -> render -> inspect -> fix" loop.
 """
 
+from cad.printer import ENDER_5_S1, BuildVolume, FitResult, Printer, fits
 from cad.runner import BuildResult, build_model, load_params
+from cad.templates import Template, get_template, list_templates
+from cad.verify import VerifyResult, verify_build
 
-__all__ = ["BuildResult", "build_model", "load_params"]
+__all__ = [
+    "ENDER_5_S1",
+    "BuildResult",
+    "BuildVolume",
+    "FitResult",
+    "Printer",
+    "Template",
+    "VerifyResult",
+    "build_model",
+    "fits",
+    "get_template",
+    "list_templates",
+    "load_params",
+    "verify_build",
+]

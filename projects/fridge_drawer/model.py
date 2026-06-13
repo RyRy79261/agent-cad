@@ -24,7 +24,10 @@ from build123d import (
 )
 
 DEFAULTS: dict[str, Any] = {
-    "width": 240.0,      # along the fridge slot
+    # Sized to the Ender 5 S1 usable bed (220 mm − 2×5 mm margin = 210 mm). A
+    # wider slot needs the drawer split into joinable halves — one piece can't
+    # exceed the build volume. See docs/printer-ender5s1.md.
+    "width": 210.0,      # along the fridge slot (≤ usable bed width)
     "depth": 180.0,      # into the cabinet
     "height": 70.0,
     "wall": 2.4,         # 6 perimeters @ 0.4mm nozzle

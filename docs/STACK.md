@@ -77,6 +77,17 @@ guidance (PETG for interior/shaded, ASA for sun/heat).
 - **Paid text-to-CAD SaaS** (Zoo.dev / Adam / Backflip) — Claude authoring
   parametric Python is the most performant use of the Max plan and keeps the
   geometry engine open and local.
-- **OpenSCAD as primary** — simpler DSL but mesh/CSG only (no STEP), weaker
-  engineering base. Kept as an escape hatch for trivial shapes if LLM output on
-  build123d is unreliable for a given part class.
+- **OpenSCAD as primary** — re-investigated 2026-06-13 (deep-research, 21 verified
+  claims). Verdict: **KEEP build123d, don't migrate.** OpenSCAD is mesh/CSG only
+  (no STEP/B-rep), which costs little for a print-only pipeline *but* weakens our
+  spec-verification (2 of 6 checks — valid B-rep, single-solid — are OCCT-native and
+  degrade to mesh heuristics without it). The decisive maturity fact: OpenSCAD's
+  fast **Manifold** backend is **nightly-only — the last stable release is 2021.01**,
+  which is too risky to ship to beginners. Two earlier objections were *overstated*
+  and are corrected here: (a) fillets/chamfers are well covered by the **BOSL2**
+  library (which even adds a teardrop overhang-limiter build123d lacks), and (b) the
+  export-format gap doesn't matter when we ship STL/3MF anyway. The one genuinely
+  open question — does Claude write OpenSCAD *more* reliably than build123d thanks to
+  its huge real-world corpus? — has **no direct benchmark**; settle it with the
+  planned eval (add OpenSCAD as a third arm). Kept as a documented escape hatch /
+  hybrid candidate for trivial CSG and beginner Customizer parts, not adopted now.

@@ -19,6 +19,19 @@ and self-correct from tracebacks. B-rep (STEP) for editability, mesh (STL) for p
 
 ## Authoring a part
 
+**Start from a known-good template, don't generate from scratch.** Research shows
+even SOTA models fail ~20% of from-scratch parametric tasks; starting from a tested
+template is the single biggest reliability win. List and scaffold:
+
+```bash
+cad templates                          # list known-good templates (box/plate/bracket/standoff)
+cad templates box                      # show its params
+cad new box projects/<name>            # scaffold model.py + params.json + print.json
+```
+
+Templates live in `services/cad/src/cad/templates/`. If none fits, adapt the
+closest one rather than starting from a blank file.
+
 Parts live in `projects/<name>/`:
 
 ```
@@ -40,6 +53,29 @@ The runner returns JSON: `ok`, `artifacts`, `metadata.bounding_box_mm`, and on
 failure the full `error` traceback. **Iterate**: read the traceback, fix, rebuild.
 Always sanity-check `bounding_box_mm` against intended dimensions.
 
+**Every part is checked against the printer's build volume.** The runner adds
+`metadata.fits_build_volume` (bool), `build_volume_mm`, and
+`build_volume_overflow_mm` for the **Ender 5 S1 — 220 × 220 × 280 mm, usable
+210 × 210 after a 5 mm bed margin** (single source of truth:
+`services/cad/src/cad/printer.py` → `ENDER_5_S1`, mirrored in `packages/types`).
+If `fits_build_volume` is `false`, the `cad` CLI prints a `⚠ DOES NOT FIT`
+warning — shrink the part or **split it into joinable pieces**; one piece can't
+exceed the bed.
+
+**Verify printability before slicing.** Add `--verify` (or pass `verify=True` to
+`build_model`) to run the spec checks in `services/cad/src/cad/verify.py`:
+valid B-rep, single solid, positive volume, non-degenerate, fits build volume, and
+**watertight/manifold mesh** (real trimesh check on the exported STL). The result
+is `result.verification` → `{printable, summary, checks[]}`; `--strict` exits
+non-zero when not printable. **Don't slice a part that isn't `printable`.**
+
+**Self-correction loop — cap it.** Read the traceback (build failed) or the failing
+`verification` checks (built but not printable), fix, rebuild. **Stop after ~2
+correction rounds** and surface the problem to the user — research shows automated
+refinement yields no measurable gain past the second pass, and vision-only checks
+are only ~65% reliable. Prefer the deterministic `verification` checks and
+`bounding_box_mm` over eyeballing the SVG render.
+
 ## build123d gotchas (learned the hard way here)
 
 - **Builder mode applies ops at creation time.** `Box(..., mode=Mode.SUBTRACT)`
@@ -53,8 +89,10 @@ Always sanity-check `bounding_box_mm` against intended dimensions.
 - Exports are module functions: `export_stl`, `export_step`, `export_brep`;
   `Mesher` for 3MF; `ExportSVG` + `project_to_viewport` for the SVG render (headless,
   no GPU). See `services/cad/src/cad/runner.py` and the examples for working patterns.
-- Use `services/cad/src/cad/examples/box_with_holes.py` and
-  `projects/fridge_drawer/model.py` as known-good templates.
+- `services/cad/src/cad/examples/box_with_holes.py` and
+  `projects/fridge_drawer/model.py` are worked **reference examples** of these
+  patterns. For starting a *new* part, prefer the template library (`cad
+  templates` / `cad new`, in `services/cad/src/cad/templates/`).
 
 ## Slicing & printing (Ender 5 S1)
 
