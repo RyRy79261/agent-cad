@@ -13,10 +13,13 @@ Run locally::
 
 from __future__ import annotations
 
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from api.jobs import JobStore
 from api.projects import get_part, list_parts
@@ -30,6 +33,11 @@ from api.schemas import (
 )
 
 jobs = JobStore()
+
+# Where API-triggered builds write their artifacts. Served read-only over HTTP at
+# /artifacts so the web viewer can fetch STL/3MF/SVG directly in the browser.
+BUILDS_DIR = Path(os.environ.get("AGENT_CAD_BUILDS_DIR", ".agent-cad-builds")).resolve()
+BUILDS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @asynccontextmanager
@@ -48,10 +56,13 @@ app = FastAPI(
 # The Next.js control panel runs on a different port in dev.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve built geometry so the browser viewer can load it (read-only).
+app.mount("/artifacts", StaticFiles(directory=str(BUILDS_DIR)), name="artifacts")
 
 
 @app.get("/health", tags=["meta"])
@@ -77,6 +88,47 @@ def cad_build(req: BuildRequest) -> JobRef:
         ).to_dict()
 
     job = jobs.submit("cad.build", work)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+@app.get("/templates", tags=["cad"])
+def templates() -> list[dict]:
+    """The known-good template library (box / plate / bracket / standoff)."""
+    from cad.templates import list_templates
+
+    return [{"name": t.name, "description": t.description} for t in list_templates()]
+
+
+@app.post("/templates/{name}/build", response_model=JobRef, tags=["cad"])
+def build_template(name: str) -> JobRef:
+    """Build a template into the served artifacts dir (with printability checks).
+
+    The job result adds ``artifact_urls`` — browser-loadable paths under
+    ``/artifacts`` — so the web viewer can render the STL directly.
+    """
+    from cad.runner import build_model
+    from cad.templates import get_template
+
+    try:
+        template = get_template(name)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    out_dir = BUILDS_DIR / name
+
+    def work() -> dict:
+        result = build_model(
+            model_path=str(template.path),
+            out_dir=str(out_dir),
+            name=name,
+            verify=True,
+        ).to_dict()
+        result["artifact_urls"] = {
+            fmt: f"/artifacts/{name}/{name}.{fmt}" for fmt in result.get("artifacts", {})
+        }
+        return result
+
+    job = jobs.submit("cad.build_template", work)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
 
 

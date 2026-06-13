@@ -78,3 +78,31 @@ def test_parts_endpoint_returns_list() -> None:
     resp = client.get("/parts")
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+
+
+def test_templates_endpoint_lists_library() -> None:
+    resp = client.get("/templates")
+    assert resp.status_code == 200
+    names = {t["name"] for t in resp.json()}
+    assert {"box", "plate", "bracket", "standoff"} <= names
+
+
+def test_build_template_serves_renderable_stl() -> None:
+    # The full web vertical slice: build a template, then fetch its STL over HTTP.
+    ref = client.post("/templates/box/build").json()
+    assert ref["status"] in ("queued", "running")
+
+    job = _poll(ref["job_id"])
+    assert job["status"] == "succeeded", job
+    result = job["result"]
+    assert result["verification"]["printable"] is True
+    stl_url = result["artifact_urls"]["stl"]
+    assert stl_url == "/artifacts/box/box.stl"
+
+    served = client.get(stl_url)
+    assert served.status_code == 200
+    assert len(served.content) > 0  # a real STL the browser viewer can load
+
+
+def test_build_unknown_template_is_404() -> None:
+    assert client.post("/templates/nope/build").status_code == 404

@@ -44,6 +44,8 @@ Thumbs.db
 projects/**/artifacts/
 # Any model built in place (e.g. the packaged examples) also writes ./artifacts/.
 **/artifacts/
+# API-served build output (StaticFiles mount at /artifacts).
+.agent-cad-builds/
 scratch/
 *.gcode.3mf
 tmp/
