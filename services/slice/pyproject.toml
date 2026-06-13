@@ -1,0 +1,18 @@
+[project]
+name = "slicer"
+version = "0.0.0"
+description = "Headless slicing: OrcaSlicer/PrusaSlicer CLI wrappers, .gcode.3mf extraction, SD-card copy."
+requires-python = ">=3.11"
+# Pure stdlib (zipfile / xml / subprocess / shutil) — the slicer binaries are
+# external system installs (OrcaSlicer AppImage / PrusaSlicer), located via env.
+dependencies = []
+
+[project.scripts]
+slice = "slicer.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/slicer"]

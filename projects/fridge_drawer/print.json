@@ -1,0 +1,19 @@
+{
+  "status": "designed",
+  "_status_values": ["designed", "sliced", "printing", "printed-ok", "printed-fail"],
+  "printer": "Creality Ender 5 S1",
+  "slicer": "orca",
+  "machine_profile": "Creality Ender-5 S1 0.4 nozzle",
+  "process_profile": "0.20mm Standard @Creality Ender-5 S1 0.4",
+  "filament": {
+    "material": "PETG",
+    "rationale": "Interior/shaded cabinet part — PETG is the pragmatic default; ASA only needed for sun/heat-exposed parts."
+  },
+  "settings": {
+    "layer_height_mm": 0.2,
+    "walls": 6,
+    "infill_percent": 40,
+    "infill_pattern": "gyroid"
+  },
+  "notes": "Orient with the floor on the bed so layer lines run across the load path, not along it."
+}

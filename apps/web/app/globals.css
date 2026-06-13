@@ -1,0 +1,12 @@
+/* Minimal baseline. The design pass replaces this with Tailwind + shadcn tokens. */
+:root {
+  color-scheme: light dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}

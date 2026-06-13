@@ -1,0 +1,28 @@
+{
+  "name": "agent-cad",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Agentic code-to-CAD & scan-to-mesh 3D printing pipeline (build123d + OrcaSlicer + FastAPI, driven by Claude Code).",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22",
+    "pnpm": ">=10"
+  },
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "clean": "turbo run clean && rm -rf node_modules/.cache .turbo",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "py:sync": "uv sync --all-packages",
+    "py:test": "uv run pytest",
+    "py:api": "uv run --package apiserver uvicorn api.main:app --reload --port 8000"
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "turbo": "^2.5.0",
+    "typescript": "^5.7.3"
+  }
+}

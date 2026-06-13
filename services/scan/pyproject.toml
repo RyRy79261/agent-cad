@@ -1,0 +1,27 @@
+[project]
+name = "scanner"
+version = "0.0.0"
+description = "Scan/LiDAR mesh cleanup: largest-component, manifold repair, decimation, recenter."
+requires-python = ">=3.11"
+dependencies = [
+    # Lightweight, mostly-pure core. trimesh handles load/repair/export;
+    # fast-simplification gives quadric decimation without a heavy native dep.
+    "trimesh>=4.4",
+    "numpy>=1.26",
+    "fast-simplification>=0.1.7",
+]
+
+[project.optional-dependencies]
+# Heavier, optional enhanced backends (recommended in the spec). Install on demand.
+open3d = ["open3d>=0.18"]
+pymeshlab = ["pymeshlab>=2023.12"]
+
+[project.scripts]
+scan = "scanner.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scanner"]
