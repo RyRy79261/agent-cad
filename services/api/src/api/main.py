@@ -73,6 +73,7 @@ def cad_build(req: BuildRequest) -> JobRef:
             out_dir=req.out_dir,
             name=req.name,
             formats=tuple(req.formats),
+            verify=req.verify,
         ).to_dict()
 
     job = jobs.submit("cad.build", work)

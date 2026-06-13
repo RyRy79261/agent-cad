@@ -47,6 +47,31 @@ def test_params_drive_dimensions(tmp_path: Path) -> None:
     assert bbox == {"x": 120.0, "y": 50.0, "z": 30.0}
 
 
+def test_metadata_reports_build_volume_fit(tmp_path: Path) -> None:
+    # box_with_holes defaults (80 × 60 × 40) comfortably fit the Ender 5 S1.
+    result = build_model(EXAMPLE, out_dir=tmp_path, name="box")
+    assert result.ok, result.error
+    meta = result.metadata
+    assert meta["printer"] == "Creality Ender 5 S1"
+    assert meta["build_volume_mm"] == {"x": 220.0, "y": 220.0, "z": 280.0}
+    assert meta["fits_build_volume"] is True
+    assert meta["build_volume_overflow_mm"] == {"x": 0.0, "y": 0.0, "z": 0.0}
+    assert meta["requires_rotation"] is False
+
+
+def test_oversize_part_flagged_unfit(tmp_path: Path) -> None:
+    # 240 mm wide overruns the 210 mm usable bed by 30 mm.
+    result = build_model(
+        EXAMPLE,
+        params={"width": 240.0, "depth": 100.0, "height": 50.0},
+        out_dir=tmp_path,
+        name="box",
+    )
+    assert result.ok, result.error
+    assert result.metadata["fits_build_volume"] is False
+    assert result.metadata["build_volume_overflow_mm"]["x"] == 30.0
+
+
 def test_broken_model_returns_traceback(tmp_path: Path) -> None:
     model = tmp_path / "broken.py"
     model.write_text(
