@@ -78,6 +78,7 @@ agent-cad/
 ## Documentation
 
 - **[docs/research-and-roadmap.md](docs/research-and-roadmap.md)** — *what's the proven way to do prompt→CAD, and our plan.* Start here.
+- **[docs/prerequisites.md](docs/prerequisites.md)** — what to install (toolchains, OrcaSlicer, SD card).
 - **[docs/STACK.md](docs/STACK.md)** — the technology choices + rationale.
 - **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** — how the pieces fit; the job model.
 - **[docs/ui-functional-spec.md](docs/ui-functional-spec.md)** — UI spec for the design pass.
@@ -108,5 +109,8 @@ history) — specified in `docs/ui-functional-spec.md`.
 ## Requirements
 
 - Node ≥ 22, pnpm ≥ 10 · Python 3.11, [uv](https://docs.astral.sh/uv/)
-- **OrcaSlicer** (set `$ORCA_SLICER_BIN`) for slicing — built-in Ender 5 S1 profile
+- **OrcaSlicer** (set `$ORCA_SLICER_BIN`) for slicing — bundled Ender 5 S1 profiles
 - Optional: `git lfs`, Open3D/PyMeshLab (heavier scan backends), CadQuery (fallback engine)
+
+See **[docs/prerequisites.md](docs/prerequisites.md)** for the full install guide
+(OrcaSlicer on WSL/Ubuntu 24.04 + SD card).

@@ -39,6 +39,21 @@ def resolve_bin(explicit: str | None = None) -> str | None:
     return shutil.which(candidate)
 
 
+def _headless_prefix() -> list[str]:
+    """``xvfb-run`` prefix when there's no display.
+
+    OrcaSlicer is a Qt GUI app and wants a display even for CLI slicing (it fails
+    to init the window otherwise); on a headless box we run it under a virtual
+    framebuffer. Skipped when a display exists or ``AGENT_CAD_NO_XVFB`` is set.
+    """
+    if os.environ.get("AGENT_CAD_NO_XVFB"):
+        return []
+    if os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"):
+        return []
+    xvfb = shutil.which("xvfb-run")
+    return [xvfb, "-a"] if xvfb else []
+
+
 def slice_model(
     model: str | Path,
     *,
@@ -57,8 +72,10 @@ def slice_model(
     ``filaments`` one or more filament JSONs. ``extra_args`` are passed through
     verbatim (e.g. ``["--layer-height", "0.1"]``) and override loaded settings.
     """
-    model = Path(model)
-    output = Path(output) if output else model.with_suffix(".gcode.3mf")
+    # Absolute paths so we can run the slicer with cwd=output dir (OrcaSlicer drops
+    # a result.json in its working directory — keep that out of the repo).
+    model = Path(model).resolve()
+    output = (Path(output) if output else model.with_suffix(".gcode.3mf")).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
 
     binary = resolve_bin(bin)
@@ -91,20 +108,22 @@ def slice_model(
             ),
         )
 
+    run_command = _headless_prefix() + command
     try:
         proc = subprocess.run(
-            command,
+            run_command,
             capture_output=True,
             text=True,
             timeout=timeout,
             check=False,
+            cwd=str(output.parent),  # contain OrcaSlicer's result.json dropping
         )
     except subprocess.TimeoutExpired as exc:
         return SliceResult(
             ok=False,
             slicer="orca",
             model_path=str(model),
-            command=command,
+            command=run_command,
             error=f"OrcaSlicer timed out after {timeout}s: {exc}",
         )
 
@@ -112,7 +131,7 @@ def slice_model(
         ok=proc.returncode == 0 and output.exists(),
         slicer="orca",
         model_path=str(model),
-        command=command,
+        command=run_command,
         archive_path=str(output) if output.exists() else None,
         stdout=proc.stdout,
         stderr=proc.stderr,

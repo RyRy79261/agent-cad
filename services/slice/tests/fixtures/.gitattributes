@@ -1,0 +1,3 @@
+# Tiny committed test fixtures are plain git blobs, not Git-LFS (override the
+# repo-wide *.stl LFS rule so the cube is always present, incl. in CI).
+cube20.stl -filter -diff -merge

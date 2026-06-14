@@ -30,6 +30,14 @@ def main(argv: list[str] | None = None) -> int:
     p_orca.add_argument("--bin", help="OrcaSlicer executable path.")
     p_orca.add_argument("--json", action="store_true")
 
+    p_e5s1 = sub.add_parser(
+        "ender5s1", help="Slice for the Ender 5 S1 with the bundled profiles (+ extract g-code)."
+    )
+    p_e5s1.add_argument("model", help="STL / 3MF to slice.")
+    p_e5s1.add_argument("--output", help="Archive output path (.gcode.3mf).")
+    p_e5s1.add_argument("--bin", help="OrcaSlicer executable path.")
+    p_e5s1.add_argument("--json", action="store_true")
+
     p_prusa = sub.add_parser("prusa", help="Slice with PrusaSlicer (plain g-code).")
     p_prusa.add_argument("model")
     p_prusa.add_argument("--config", action="append", required=True, help=".ini config (repeatable).")
@@ -65,6 +73,23 @@ def _cmd_orca(args: argparse.Namespace) -> int:
         output=args.output,
         bin=args.bin,
         extract=not args.no_extract,
+    )
+    print(json.dumps(result.to_dict(), indent=2) if args.json else _fmt_slice(result))
+    return 0 if result.ok else 1
+
+
+def _cmd_ender5s1(args: argparse.Namespace) -> int:
+    from slicer.profiles import ender5s1_profiles
+
+    profiles = ender5s1_profiles()
+    result = orca.slice_model(
+        args.model,
+        machine=profiles["machine"],
+        process=profiles["process"],
+        filaments=[profiles["filament"]],
+        output=args.output,
+        bin=args.bin,
+        extract=True,
     )
     print(json.dumps(result.to_dict(), indent=2) if args.json else _fmt_slice(result))
     return 0 if result.ok else 1
@@ -118,6 +143,7 @@ def _fmt_slice(result) -> str:  # noqa: ANN001
 
 _DISPATCH = {
     "orca": _cmd_orca,
+    "ender5s1": _cmd_ender5s1,
     "prusa": _cmd_prusa,
     "extract": _cmd_extract,
     "info": _cmd_info,

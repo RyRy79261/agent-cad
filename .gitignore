@@ -48,5 +48,7 @@ projects/**/artifacts/
 .agent-cad-builds/
 scratch/
 *.gcode.3mf
+result.json
+slice_info.config
 tmp/
 .cad-cache/
