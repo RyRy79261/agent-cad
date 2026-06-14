@@ -1,0 +1,24 @@
+3DBenchy — the jolly 3D-printing torture-test boat
+
+Source file: 3DBenchy.stl  (the canonical OG single-part boat)
+  from https://github.com/CreativeTools/3DBenchy (CreativeTools official repo)
+  sha256: 6ab57f1c3f8e86bc3cbd302c6fa6270acf06277c6335454e922419c25d42e97e
+  size:   11,285,384 bytes (binary STL)
+  bbox:   60 x 31 x 48 mm — fits the Ender 5 S1 bed
+
+License: Creative Commons CC0 1.0 Universal (Public Domain Dedication)
+  https://creativecommons.org/publicdomain/zero/1.0/
+  Per the official license page: https://www.3dbenchy.com/license/
+
+Released into the public domain on 2025-02-14 (effective 2025-04-09, the model's
+10th anniversary) by NTI Group together with original creator Daniel Norée and
+former Creative Tools CEO Paulo Kiefe.
+Announcement: https://www.3dbenchy.com/3dbenchy-sets-sail-into-the-public-domain/
+
+Originally designed by Daniel Norée, published by Paulo Kiefe under Creative Tools
+(2015). #3DBenchy — 3DBenchy.com
+
+CC0 imposes no obligations (no attribution, no share-alike, no non-commercial
+clause); this notice is provided as a courtesy and to pin provenance. The GitHub
+source repo predates the 2025 relicense and carries no in-band LICENSE file, so the
+public-domain basis is recorded here, anchored to the sha256 above.
