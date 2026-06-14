@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { ThemeProvider } from "@/components/theme-provider";
+import { ModeToggle } from "@/components/mode-toggle";
+import { Button } from "@/components/ui/button";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -8,35 +11,27 @@ export const metadata: Metadata = {
   description: "Agentic code-to-CAD & scan-to-mesh 3D printing control panel",
 };
 
-const navLink: React.CSSProperties = { color: "#b5732a", textDecoration: "none", fontWeight: 600 };
-
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
-      <body>
-        <header
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "0.75rem 1.5rem",
-            borderBottom: "1px solid #eee",
-            fontFamily: "system-ui, sans-serif",
-          }}
-        >
-          <Link href="/" style={{ fontWeight: 700, fontSize: "1.1rem", color: "#222", textDecoration: "none" }}>
-            agent-cad
-          </Link>
-          <nav style={{ display: "flex", gap: 18, fontSize: "0.9rem" }}>
-            <Link href="/" style={navLink}>
-              Design
+    <html lang="en" suppressHydrationWarning>
+      <body className="min-h-screen antialiased">
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+          <header className="sticky top-0 z-20 flex items-center justify-between border-b bg-background/80 px-6 py-3 backdrop-blur">
+            <Link href="/" className="text-lg font-bold tracking-tight">
+              agent<span className="text-primary">-cad</span>
             </Link>
-            <Link href="/setup" style={navLink}>
-              Printer setup
-            </Link>
-          </nav>
-        </header>
-        {children}
+            <nav className="flex items-center gap-1">
+              <Button variant="ghost" size="sm" asChild>
+                <Link href="/">Design</Link>
+              </Button>
+              <Button variant="ghost" size="sm" asChild>
+                <Link href="/setup">Printer setup</Link>
+              </Button>
+              <ModeToggle />
+            </nav>
+          </header>
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   );

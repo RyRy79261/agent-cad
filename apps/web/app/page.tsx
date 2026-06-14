@@ -1,17 +1,16 @@
 import { BuildDemo } from "./BuildDemo";
 
 /**
- * agent-cad control panel — the first end-to-end vertical slice: pick a known-good
- * template, build it on the FastAPI server (with printability checks), and render
- * the resulting STL live in the browser. The fuller UI (prompt box, slice→SD flow,
- * GitHub history) is specified in docs/ui-functional-spec.md.
+ * agent-cad control panel — describe/pick a part, build it on the FastAPI server
+ * (with printability checks), preview the model + g-code toolpaths, and download
+ * for the SD card. See docs/ui-functional-spec.md.
  */
 export default function Home() {
   return (
-    <main style={{ fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 1100, margin: "0 auto" }}>
-      <p style={{ color: "#666", marginTop: 0 }}>
+    <main className="mx-auto max-w-6xl px-6 py-8">
+      <p className="mb-6 text-muted-foreground">
         Prompt → CAD → print, for a Creality Ender 5 S1. New here?{" "}
-        <a href="/setup" style={{ color: "#b5732a", fontWeight: 600 }}>
+        <a href="/setup" className="font-semibold text-primary hover:underline">
           Set up your printer first →
         </a>
       </p>

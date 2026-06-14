@@ -1,12 +1,60 @@
-/* Minimal baseline. The design pass replaces this with Tailwind + shadcn tokens. */
-:root {
-  color-scheme: light dark;
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Warm-neutral theme with a tan/brown brand accent. Readable in light AND dark. */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 12%;
+    --primary: 28 42% 40%;
+    --primary-foreground: 40 33% 97%;
+    --secondary: 30 20% 96%;
+    --secondary-foreground: 0 0% 12%;
+    --muted: 30 15% 95%;
+    --muted-foreground: 0 0% 40%;
+    --accent: 30 38% 93%;
+    --accent-foreground: 28 42% 28%;
+    --destructive: 0 75% 48%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 30 15% 88%;
+    --input: 30 15% 88%;
+    --ring: 28 42% 40%;
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 0 0% 7%;
+    --foreground: 0 0% 96%;
+    --card: 0 0% 11%;
+    --card-foreground: 0 0% 96%;
+    --popover: 0 0% 9%;
+    --popover-foreground: 0 0% 96%;
+    --primary: 30 44% 62%;
+    --primary-foreground: 28 40% 12%;
+    --secondary: 0 0% 16%;
+    --secondary-foreground: 0 0% 96%;
+    --muted: 0 0% 16%;
+    --muted-foreground: 0 0% 65%;
+    --accent: 28 24% 19%;
+    --accent-foreground: 30 40% 85%;
+    --destructive: 0 62% 46%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 18%;
+    --input: 0 0% 20%;
+    --ring: 30 44% 62%;
+  }
 }
 
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
 }
