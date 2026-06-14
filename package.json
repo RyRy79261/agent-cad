@@ -17,12 +17,15 @@
     "clean": "turbo run clean && rm -rf node_modules/.cache .turbo",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
     "py:sync": "uv sync --all-packages",
-    "py:test": "uv run pytest",
+    "py:test": "PYTHONUTF8=1 uv run pytest",
     "py:api": "uv run --package apiserver uvicorn api.main:app --reload --port 8000"
   },
   "devDependencies": {
     "prettier": "^3.4.2",
     "turbo": "^2.5.0",
     "typescript": "^5.7.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
   }
 }

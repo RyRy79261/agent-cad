@@ -82,11 +82,12 @@ export function BuildDemo() {
           ))}
         </div>
 
+        {error ? <p style={styles.error}>⚠ {error}</p> : null}
+
         {status !== "idle" ? (
           <>
             <h2 style={styles.h2}>2 · Result</h2>
             {status === "building" ? <Hint>Building “{active}” on the server…</Hint> : null}
-            {error ? <p style={styles.error}>⚠ {error}</p> : null}
             {status === "done" && meta ? (
               <div style={styles.facts}>
                 <Fact label="Size">

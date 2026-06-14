@@ -10,7 +10,6 @@ import zipfile
 from pathlib import Path
 
 import pytest
-
 from slicer.extract import extract_gcode, list_plate_gcode, read_slice_info, summarize
 from slicer.sdcard import copy_to_sd, sanitize_name
 

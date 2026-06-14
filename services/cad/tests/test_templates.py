@@ -10,7 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from cad.templates import get_template, list_templates
 
 pytest.importorskip("build123d", reason="build123d (OCCT) not installed")

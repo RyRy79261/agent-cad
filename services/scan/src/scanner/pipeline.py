@@ -32,7 +32,7 @@ class ScanStats:
     volume_mm3: float | None
 
     @classmethod
-    def of(cls, mesh: "trimesh.Trimesh") -> "ScanStats":
+    def of(cls, mesh: trimesh.Trimesh) -> ScanStats:
         x, y, z = (float(v) for v in mesh.extents)
         watertight = bool(mesh.is_watertight)
         return cls(
@@ -144,7 +144,7 @@ def clean_mesh(
         )
 
 
-def _largest_component(mesh: "trimesh.Trimesh") -> "trimesh.Trimesh":
+def _largest_component(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
     """Return the connected component with the most faces (drops floaters)."""
     parts = mesh.split(only_watertight=False)
     if len(parts) <= 1:
@@ -152,7 +152,7 @@ def _largest_component(mesh: "trimesh.Trimesh") -> "trimesh.Trimesh":
     return max(parts, key=lambda m: len(m.faces))
 
 
-def _decimate(mesh: "trimesh.Trimesh", target_faces: int) -> "trimesh.Trimesh":
+def _decimate(mesh: trimesh.Trimesh, target_faces: int) -> trimesh.Trimesh:
     """Quadric-decimate to ~``target_faces`` (no-op if backend unavailable)."""
     try:
         return mesh.simplify_quadric_decimation(face_count=target_faces)

@@ -31,7 +31,7 @@ scanner = { workspace = true }
 apiserver = { workspace = true }
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py311"
 src = ["services"]
 

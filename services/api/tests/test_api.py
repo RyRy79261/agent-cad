@@ -10,11 +10,9 @@ import time
 import zipfile
 from pathlib import Path
 
-import pytest
 import trimesh
-from fastapi.testclient import TestClient
-
 from api.main import app
+from fastapi.testclient import TestClient
 
 client = TestClient(app)
 

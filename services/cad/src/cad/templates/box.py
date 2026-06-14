@@ -33,8 +33,8 @@ PARAMS: dict[str, dict[str, Any]] = {
     "height": {"default": 40.0, "min": 5.0, "max": 280.0, "unit": "mm", "desc": "Outer Z size"},
     "wall": {"default": 2.4, "min": 0.8, "max": 10.0, "unit": "mm", "desc": "Side wall thickness"},
     "floor": {"default": 2.0, "min": 0.8, "max": 10.0, "unit": "mm", "desc": "Floor thickness"},
-    "corner_radius": {"default": 3.0, "min": 0.0, "max": 30.0, "unit": "mm", "desc": "Vertical corner fillet (0 = sharp)"},
-    "bolt_diameter": {"default": 0.0, "min": 0.0, "max": 12.0, "unit": "mm", "desc": "Floor bolt-hole diameter (0 = none)"},
+    "corner_radius": {"default": 3.0, "min": 0.0, "max": 30.0, "unit": "mm", "desc": "Corner fillet (0=sharp)"},
+    "bolt_diameter": {"default": 0.0, "min": 0.0, "max": 12.0, "unit": "mm", "desc": "Floor bolt holes (0=none)"},
     "bolt_inset": {"default": 10.0, "min": 4.0, "max": 60.0, "unit": "mm", "desc": "Bolt-hole inset from edges"},
 }
 
