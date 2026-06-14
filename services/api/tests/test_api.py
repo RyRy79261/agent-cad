@@ -6,12 +6,13 @@ Covers the synchronous extract endpoint and the full async job lifecycle
 
 from __future__ import annotations
 
+import shutil
 import time
 import zipfile
 from pathlib import Path
 
 import trimesh
-from api.main import app
+from api.main import BUILDS_DIR, app
 from fastapi.testclient import TestClient
 
 client = TestClient(app)
@@ -104,3 +105,28 @@ def test_build_template_serves_renderable_stl() -> None:
 
 def test_build_unknown_template_is_404() -> None:
     assert client.post("/templates/nope/build").status_code == 404
+
+
+def test_slice_requires_build_first() -> None:
+    shutil.rmtree(BUILDS_DIR / "bracket", ignore_errors=True)  # ensure not built
+    assert client.post("/templates/bracket/slice").status_code == 409
+
+
+def test_build_then_slice_to_gcode() -> None:
+    # Build, then slice. Succeeds with a gcode_url when OrcaSlicer is installed;
+    # fails gracefully (clear error) when it isn't (e.g. CI) — never crashes.
+    build = _poll(client.post("/templates/box/build").json()["job_id"])
+    assert build["status"] == "succeeded", build
+
+    ref = client.post("/templates/box/slice").json()
+    assert ref["status"] in ("queued", "running")
+    job = _poll(ref["job_id"], timeout=180)
+    result = job["result"]
+
+    if job["status"] == "succeeded":
+        assert result["gcode_url"] == "/artifacts/box/box.gcode"
+        served = client.get(result["gcode_url"])
+        assert served.status_code == 200 and "G28" in served.text
+    else:
+        # No slicer available -> graceful failure, not a crash.
+        assert "orcaslicer" in (result.get("error") or "").lower()
