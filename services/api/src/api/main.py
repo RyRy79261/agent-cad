@@ -132,6 +132,41 @@ def build_template(name: str) -> JobRef:
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
 
 
+@app.post("/templates/{name}/slice", response_model=JobRef, tags=["slice"])
+def slice_template(name: str) -> JobRef:
+    """Slice a built template's STL for the Ender 5 S1 and serve the g-code.
+
+    Build the template first (``POST /templates/{name}/build``). The job result adds
+    ``gcode_url`` (under ``/artifacts``) for the browser g-code viewer / SD download.
+    Fails gracefully (``ok: false``) when OrcaSlicer isn't installed.
+    """
+    stl = BUILDS_DIR / name / f"{name}.stl"
+    if not stl.exists():
+        raise HTTPException(status_code=409, detail=f"build {name!r} first — no STL at {stl}")
+    archive = BUILDS_DIR / name / f"{name}.gcode.3mf"
+
+    def work() -> dict:
+        from slicer import orca
+        from slicer.profiles import ender5s1_profiles
+
+        profiles = ender5s1_profiles()
+        result = orca.slice_model(
+            stl,
+            machine=profiles["machine"],
+            process=profiles["process"],
+            filaments=[profiles["filament"]],
+            output=archive,
+            extract=True,
+        ).to_dict()
+        gpath = result.get("gcode_path")
+        if result.get("ok") and gpath:
+            result["gcode_url"] = f"/artifacts/{name}/{Path(gpath).name}"
+        return result
+
+    job = jobs.submit("slice.ender5s1", work)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
 # --------------------------------------------------------------------------- #
 # Slice                                                                        #
 # --------------------------------------------------------------------------- #
