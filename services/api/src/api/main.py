@@ -14,6 +14,7 @@ Run locally::
 from __future__ import annotations
 
 import os
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -26,10 +27,12 @@ from api.projects import get_part, list_parts
 from api.schemas import (
     BuildRequest,
     ExtractRequest,
+    GenerateRequest,
     JobRef,
     OrcaSliceRequest,
     PrusaSliceRequest,
     ScanCleanRequest,
+    SliceSettings,
 )
 
 jobs = JobStore()
@@ -132,32 +135,54 @@ def build_template(name: str) -> JobRef:
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
 
 
-@app.post("/templates/{name}/slice", response_model=JobRef, tags=["slice"])
-def slice_template(name: str) -> JobRef:
-    """Slice a built template's STL for the Ender 5 S1 and serve the g-code.
+def _submit_slice(name: str, settings: SliceSettings | None = None) -> JobRef:
+    """Slice ``<builds>/<name>/<name>.stl`` for the Ender 5 S1 and serve the g-code.
 
-    Build the template first (``POST /templates/{name}/build``). The job result adds
-    ``gcode_url`` (under ``/artifacts``) for the browser g-code viewer / SD download.
-    Fails gracefully (``ok: false``) when OrcaSlicer isn't installed.
+    Shared by template / generated / sample slicing — all write the same layout. The
+    ``settings`` body overrides the committed profile for this slice: typed fields via
+    :func:`slice_overrides`, plus arbitrary ``raw`` key→value pairs via
+    :func:`route_raw_overrides` (raw wins on conflict). The job result echoes the applied
+    settings + any override warnings and adds ``gcode_url`` (under ``/artifacts``); it
+    fails gracefully (``ok: false``) without OrcaSlicer.
     """
-    stl = BUILDS_DIR / name / f"{name}.stl"
+    settings = settings or SliceSettings()
+    typed = settings.model_dump(exclude={"raw"}, exclude_none=True)
+    raw = settings.raw or {}
+    part_dir = BUILDS_DIR / name
+    stl = part_dir / f"{name}.stl"
     if not stl.exists():
         raise HTTPException(status_code=409, detail=f"build {name!r} first — no STL at {stl}")
-    archive = BUILDS_DIR / name / f"{name}.gcode.3mf"
+    archive = part_dir / f"{name}.gcode.3mf"
 
     def work() -> dict:
         from slicer import orca
-        from slicer.profiles import ender5s1_profiles
+        from slicer.profiles import (
+            ender5s1_profiles,
+            merge_overrides,
+            profile_with_overrides,
+            route_raw_overrides,
+            slice_overrides,
+        )
 
         profiles = ender5s1_profiles()
+        paths = dict(profiles)  # machine / process / filament -> Path
+        raw_overrides, warnings = route_raw_overrides(raw)
+        merged = merge_overrides(slice_overrides(**typed), raw_overrides)  # raw wins
+        for kind, override in merged.items():
+            paths[kind] = profile_with_overrides(
+                override, part_dir / f"_{kind}_override.json", base=profiles[kind]
+            )
         result = orca.slice_model(
             stl,
-            machine=profiles["machine"],
-            process=profiles["process"],
-            filaments=[profiles["filament"]],
+            machine=paths["machine"],
+            process=paths["process"],
+            filaments=[paths["filament"]],
             output=archive,
             extract=True,
         ).to_dict()
+        result["settings"] = typed
+        result["raw_overrides"] = raw
+        result["override_warnings"] = warnings
         gpath = result.get("gcode_path")
         if result.get("ok") and gpath:
             result["gcode_url"] = f"/artifacts/{name}/{Path(gpath).name}"
@@ -165,6 +190,140 @@ def slice_template(name: str) -> JobRef:
 
     job = jobs.submit("slice.ender5s1", work)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+@app.post("/templates/{name}/slice", response_model=JobRef, tags=["slice"])
+def slice_template(name: str, settings: SliceSettings | None = None) -> JobRef:
+    """Slice a built template's STL (build it first via ``POST /templates/{name}/build``)."""
+    return _submit_slice(name, settings)
+
+
+# --------------------------------------------------------------------------- #
+# Generate (free-text → CAD)                                                   #
+# --------------------------------------------------------------------------- #
+def _slugify(text: str, *, fallback: str = "part") -> str:
+    """A filesystem/URL-safe short slug from a free-text prompt."""
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    slug = "-".join(slug.split("-")[:6])  # keep it short and readable
+    return slug[:48] or fallback
+
+
+@app.post("/generate", response_model=JobRef, tags=["cad"])
+def generate(req: GenerateRequest) -> JobRef:
+    """Generate a part from a free-text prompt, build + verify it, serve artifacts.
+
+    Runs the pluggable LLM generator (default driver ``claude-code`` — the local
+    ``claude`` CLI on the user's plan) → ``model.py`` → build with printability
+    checks → capped self-correction. The job result is the ``GenerateResult`` plus
+    ``name`` and ``artifact_urls`` (under ``/artifacts``) for the browser viewer;
+    slice it afterwards with ``POST /generated/{name}/slice``.
+    """
+    from cad.generate import generate_part
+
+    name = _slugify(req.name or req.prompt)
+    dest = BUILDS_DIR / name
+
+    def work() -> dict:
+        result = generate_part(
+            req.prompt,
+            dest,
+            driver=req.driver,
+            model=req.model,
+            max_rounds=req.max_rounds,
+            verify=True,
+            name=name,
+            out_dir=str(dest),
+        )
+        payload = result.to_dict()
+        payload["name"] = name
+        artifacts = (result.build or {}).get("artifacts", {}) if result.build else {}
+        payload["artifact_urls"] = {
+            fmt: f"/artifacts/{name}/{Path(path).name}" for fmt, path in artifacts.items()
+        }
+        return payload
+
+    job = jobs.submit("cad.generate", work)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+@app.post("/generated/{name}/slice", response_model=JobRef, tags=["slice"])
+def slice_generated(name: str, settings: SliceSettings | None = None) -> JobRef:
+    """Slice a generated part's STL for the Ender 5 S1 (generate it first)."""
+    return _submit_slice(name, settings)
+
+
+# --------------------------------------------------------------------------- #
+# Sample models (committed reference STLs — e.g. the 3DBenchy torture test)    #
+# --------------------------------------------------------------------------- #
+def _samples() -> dict[str, dict]:
+    """Registry of committed, ready-to-slice reference models (imported STLs)."""
+    from api.projects import projects_root
+
+    root = projects_root()
+    return {
+        "benchy": {
+            "stl": root / "benchy" / "3DBenchy.stl",
+            "description": "3DBenchy — the classic 3D-printing torture-test boat (CC0 / public domain). "
+            "Print it after the calibration cube reads true.",
+        },
+    }
+
+
+@app.get("/samples", tags=["cad"])
+def samples() -> list[dict]:
+    """Committed reference models that can be staged and sliced (no build step)."""
+    return [
+        {"name": n, "description": s["description"], "available": s["stl"].exists()}
+        for n, s in _samples().items()
+    ]
+
+
+@app.post("/samples/{name}/stage", response_model=JobRef, tags=["cad"])
+def stage_sample(name: str) -> JobRef:
+    """Copy a sample STL into the served builds dir + report bbox / bed fit.
+
+    Mirrors a template build (so the web viewer can render it and then slice via
+    ``POST /samples/{name}/slice``), but the geometry is an imported STL, not built.
+    """
+    sample = _samples().get(name)
+    if sample is None:
+        raise HTTPException(status_code=404, detail=f"unknown sample {name!r}")
+    src = sample["stl"]
+    if not src.exists():
+        raise HTTPException(status_code=409, detail=f"sample {name!r} STL missing at {src}")
+    out_dir = BUILDS_DIR / name
+
+    def work() -> dict:
+        import shutil
+
+        import trimesh
+        from cad.printer import fits
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        dst = out_dir / f"{name}.stl"
+        shutil.copyfile(src, dst)
+        mesh = trimesh.load(dst, force="mesh")
+        ext = [float(v) for v in mesh.extents]
+        fit = fits({"x": ext[0], "y": ext[1], "z": ext[2]})
+        return {
+            "ok": True,
+            "name": name,
+            "metadata": {
+                "bounding_box_mm": {"x": round(ext[0], 2), "y": round(ext[1], 2), "z": round(ext[2], 2)},
+                "fits_build_volume": fit.fits,
+                "build_volume_mm": fit.build_volume_mm,
+            },
+            "artifact_urls": {"stl": f"/artifacts/{name}/{name}.stl"},
+        }
+
+    job = jobs.submit("cad.stage_sample", work)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+@app.post("/samples/{name}/slice", response_model=JobRef, tags=["slice"])
+def slice_sample(name: str, settings: SliceSettings | None = None) -> JobRef:
+    """Slice a staged sample's STL for the Ender 5 S1 (stage it first)."""
+    return _submit_slice(name, settings)
 
 
 # --------------------------------------------------------------------------- #

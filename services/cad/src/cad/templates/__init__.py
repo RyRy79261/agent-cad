@@ -40,7 +40,9 @@ class Template:
     path: Path
 
     def source(self) -> str:
-        return self.path.read_text()
+        # Explicit UTF-8: template docstrings contain non-ASCII (×, —, °), which
+        # an ascii-locale read would choke on independently of $PYTHONUTF8.
+        return self.path.read_text(encoding="utf-8")
 
     def _module(self):
         return importlib.import_module(f"cad.templates.{self.name}")
