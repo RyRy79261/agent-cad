@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
-import { Download, Info, Printer, Save, Trash2 } from "lucide-react";
+import { Download, Info, Printer, Save, Star, Trash2 } from "lucide-react";
 import { DEFAULT_API_URL, type BuildResult } from "@agent-cad/types";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -108,7 +108,13 @@ type SettingsBundle = {
   supportThreshold: number;
   rawOverrides: string;
 };
-type SettingsVersion = { id: string; savedAt: string; label: string; settings: SettingsBundle };
+type SettingsVersion = {
+  id: string;
+  savedAt: string;
+  label: string;
+  settings: SettingsBundle;
+  isDefault?: boolean; // the "best so far" — loads into the panel on open
+};
 const VERSIONS_KEY = "agent-cad:settings-versions";
 
 export function BuildDemo() {
@@ -131,10 +137,10 @@ export function BuildDemo() {
   // them overrides that profile for the next slice (and shows up in the g-code).
   const [infill, setInfill] = useState(15);
   const [wallSpeed, setWallSpeed] = useState(25);
-  const [jerk, setJerk] = useState(12);
+  const [jerk, setJerk] = useState(25);
   const [bedTemp, setBedTemp] = useState(60);
   const [nozzleTemp, setNozzleTemp] = useState(200);
-  const [flow, setFlow] = useState(0.98);
+  const [flow, setFlow] = useState(0.95);
   const [retraction, setRetraction] = useState(1);
   // quality & structure
   const [layerHeight, setLayerHeight] = useState(0.2);
@@ -163,12 +169,17 @@ export function BuildDemo() {
       .then((r) => (r.ok ? r.json() : []))
       .then(setSamples)
       .catch(() => setSamples([]));
-    // Restore previously-saved settings versions.
+    // Restore saved settings versions; if one is the default, load it into the panel.
     try {
       const saved = window.localStorage.getItem(VERSIONS_KEY);
-      if (saved) setVersions(JSON.parse(saved) as SettingsVersion[]);
+      if (saved) {
+        const parsed = JSON.parse(saved) as SettingsVersion[];
+        setVersions(parsed);
+        const def = parsed.find((v) => v.isDefault);
+        if (def) applyBundle(def.settings);
+      }
     } catch {
-      /* localStorage unavailable or corrupt — start empty */
+      /* localStorage unavailable or corrupt — start from the committed defaults */
     }
   }, []);
 
@@ -209,15 +220,23 @@ export function BuildDemo() {
     }
   }
 
-  function saveVersion() {
+  function saveVersion(asDefault: boolean) {
     const version: SettingsVersion = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       savedAt: new Date().toISOString(),
       label: versionLabel.trim(),
       settings: currentBundle(),
+      isDefault: asDefault,
     };
-    persistVersions([version, ...versions].slice(0, 25)); // keep the 25 most recent
+    // only one default at a time
+    const others = asDefault ? versions.map((v) => ({ ...v, isDefault: false })) : versions;
+    persistVersions([version, ...others].slice(0, 25)); // keep the 25 most recent
     setVersionLabel("");
+  }
+
+  function toggleDefault(id: string) {
+    const turningOn = !versions.find((v) => v.id === id)?.isDefault;
+    persistVersions(versions.map((v) => ({ ...v, isDefault: turningOn && v.id === id })));
   }
 
   function deleteVersion(id: string) {
@@ -566,33 +585,55 @@ export function BuildDemo() {
               <div className="mt-3 border-t pt-3">
                 <p className="mb-1 text-sm font-semibold">Saved versions</p>
                 <p className="mb-2 text-xs text-muted-foreground">
-                  Snapshot the current settings so you can compare runs and roll back. Saved in this browser.
+                  Snapshot the settings to compare runs and roll back. The{" "}
+                  <Star className="inline h-3 w-3 fill-amber-500 align-[-1px] text-amber-500" /> default loads
+                  automatically when you open the app. Saved in this browser.
                 </p>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Input
                     value={versionLabel}
                     onChange={(e) => setVersionLabel(e.target.value)}
-                    placeholder="Label (e.g. v2 — jerk 18)"
+                    placeholder="Label (e.g. v2 — jerk 25)"
                     disabled={slicing}
-                    className="h-8 text-sm"
+                    className="h-8 min-w-[8rem] flex-1 text-sm"
                   />
-                  <Button type="button" variant="secondary" size="sm" onClick={saveVersion} disabled={slicing} className="flex-none gap-1">
+                  <Button type="button" variant="secondary" size="sm" onClick={() => saveVersion(false)} disabled={slicing} className="flex-none gap-1">
                     <Save className="h-3.5 w-3.5" />
-                    Save version
+                    Save
+                  </Button>
+                  <Button type="button" size="sm" onClick={() => saveVersion(true)} disabled={slicing} className="flex-none gap-1">
+                    <Star className="h-3.5 w-3.5" />
+                    Save as default
                   </Button>
                 </div>
                 {versions.length ? (
                   <ul className="mt-2 space-y-1">
                     {versions.map((v) => (
-                      <li key={v.id} className="flex items-start justify-between gap-2 rounded-md border p-2 text-xs">
+                      <li
+                        key={v.id}
+                        className={cn(
+                          "flex items-start justify-between gap-2 rounded-md border p-2 text-xs",
+                          v.isDefault && "border-amber-500/60 bg-amber-500/5",
+                        )}
+                      >
                         <div className="min-w-0">
                           <div className="font-medium">
+                            {v.isDefault ? <span className="mr-1 font-semibold text-amber-600">★ default</span> : null}
                             {v.label || "Untitled"}{" "}
                             <span className="font-normal text-muted-foreground">· {fmtDate(v.savedAt)}</span>
                           </div>
                           <div className="text-muted-foreground">{summarizeBundle(v.settings)}</div>
                         </div>
                         <div className="flex flex-none items-center gap-1">
+                          <button
+                            type="button"
+                            aria-label={v.isDefault ? "unset as default" : "set as default"}
+                            onClick={() => toggleDefault(v.id)}
+                            disabled={slicing}
+                            className={cn("p-0.5", v.isDefault ? "text-amber-500" : "text-muted-foreground hover:text-amber-500")}
+                          >
+                            <Star className={cn("h-3.5 w-3.5", v.isDefault && "fill-current")} />
+                          </button>
                           <Button
                             type="button"
                             variant="outline"
@@ -607,6 +648,7 @@ export function BuildDemo() {
                             type="button"
                             aria-label="delete version"
                             onClick={() => deleteVersion(v.id)}
+                            disabled={slicing}
                             className="text-muted-foreground hover:text-destructive"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
@@ -617,7 +659,7 @@ export function BuildDemo() {
                   </ul>
                 ) : (
                   <p className="mt-2 text-xs text-muted-foreground">
-                    No saved versions yet — save one to compare later.
+                    No saved versions yet — “Save as default” to set your best so far.
                   </p>
                 )}
               </div>

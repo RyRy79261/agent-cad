@@ -8,10 +8,12 @@ profile export.
   nozzle"** system profile, with patches: (1) `layer_change_gcode` set to `G92 E0`
   (the Creality base leaves it empty, and OrcaSlicer's own validator rejects an empty
   `layer_change_gcode` for relative-extruder (M83) profiles). (2) **`machine_max_jerk_x/y`
-  raised `8 → 12`** — stock Ender 5 S1 Marlin uses *classic jerk* (not junction
+  raised `8 → 25`** — stock Ender 5 S1 Marlin uses *classic jerk* (not junction
   deviation), so this is honored via the emitted `M205`; a *higher* jerk shortens the
   deceleration/dwell at each corner, which *reduces* corner bulging (the inverse of the
-  ringing fix — only safe because the walls show no ringing). (3) `default_bed_type`
+  ringing fix). 25 is the owner's empirically-chosen "best so far" against bulging —
+  aggressive (watch for ringing), but the residual is the pressure-advance gap that only
+  firmware fixes. (3) `default_bed_type`
   set to *Textured PEI Plate* (GUI hint; the headless CLI still defaults to Cool Plate,
   so the bed temp is pinned in `filament.json` instead — see below).
 - `process.json` — "0.20mm Standard @Creality Ender5S1". **Corner-bulging tune**
@@ -20,7 +22,7 @@ profile export.
   the best fix available without pressure advance), and `precise_outer_wall` enabled
   (removes wall overlap so the cube measures truer; requires the inner→outer
   `wall_infill_order`, which we keep). **Process accelerations are deliberately left
-  at `0` (deferring to the firmware cap of 500 mm/s²); jerk is *raised* to 12 in
+  at `0` (deferring to the firmware cap of 500 mm/s²); jerk is *raised* to 25 in
   `machine.json` (see above). The rule for corner bulging: do not *lower* accel/jerk —
   that lengthens corner dwell and makes bulging *worse*.** See
   `docs/troubleshooting-cube.md`.
@@ -31,7 +33,9 @@ profile export.
   generic `fdm_filament_pla` base resolves the bed to **35 °C** (Cool Plate), far too
   cold for PLA on the Ender 5 S1's textured PC/PEI sheet → poor adhesion/warping. The
   headless CLI ignores plate selection and falls back to Cool Plate, so we set *all*
-  plates to 60 — PLA gets 60 °C regardless of which plate resolves.
+  plates to 60 — PLA gets 60 °C regardless of which plate resolves. `filament_flow_ratio`
+  set to **0.95** (from 0.98) — less material means a smaller corner over-deposit, part
+  of the firmware-free bulging tune.
 
 **Inherited-default corrections** (from a full settings audit — see
 `docs/orcaslicer-settings-ender5s1.md`): `support_base_pattern_spacing` 0.2 → 2.5 mm
