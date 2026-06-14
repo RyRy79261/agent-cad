@@ -65,6 +65,16 @@ describe("BuildDemo", () => {
 
     expect(await screen.findByText(/OrcaSlicer isn't installed/)).toBeTruthy();
   });
+
+  it("resolves a typed prompt to a template and builds it", async () => {
+    mockFlow();
+    render(<BuildDemo />);
+
+    // The default prompt "calibration cube" resolves to the cube template.
+    fireEvent.click(await screen.findByText("Design it"));
+
+    expect(await screen.findByText(/Slice for Ender 5 S1/)).toBeTruthy();
+  });
 });
 
 const ok = (value: unknown) => ({ ok: true, json: async () => value });
@@ -75,24 +85,29 @@ function mockFlow(opts: { sliceOk?: boolean } = {}) {
     vi.fn(async (url: string, init?: { method?: string }) => {
       const path = String(url).replace(/^https?:\/\/[^/]+/, "");
       void init;
-      if (path.endsWith("/templates")) return ok([{ name: "box", description: "A box" }]);
-      if (path.endsWith("/templates/box/build")) return ok({ job_id: "b1" });
-      if (path.endsWith("/jobs/b1"))
+      let m: RegExpMatchArray | null;
+      if (path.endsWith("/templates"))
+        return ok([
+          { name: "cube", description: "A calibration cube" },
+          { name: "box", description: "A box" },
+        ]);
+      if ((m = path.match(/\/templates\/(\w+)\/build$/))) return ok({ job_id: `build-${m[1]}` });
+      if ((m = path.match(/\/templates\/(\w+)\/slice$/))) return ok({ job_id: `slice-${m[1]}` });
+      if (path.includes("/jobs/build-"))
         return ok({
           status: "succeeded",
           result: {
-            artifact_urls: { stl: "/artifacts/box/box.stl" },
+            artifact_urls: { stl: "/artifacts/x/x.stl" },
             metadata: { bounding_box_mm: { x: 20, y: 20, z: 20 }, fits_build_volume: true },
             verification: { printable: true, checks: [] },
           },
         });
-      if (path.endsWith("/templates/box/slice")) return ok({ job_id: "s1" });
-      if (path.endsWith("/jobs/s1"))
+      if (path.includes("/jobs/slice-"))
         return opts.sliceOk === false
           ? ok({ status: "failed", error: "OrcaSlicer executable not found", result: { ok: false, error: "OrcaSlicer executable not found" } })
           : ok({
               status: "succeeded",
-              result: { ok: true, gcode_url: "/artifacts/box/box.gcode", info: { plates: [{ print_time_s: 1448, filaments: [{ used_m: "2.19" }] }] } },
+              result: { ok: true, gcode_url: "/artifacts/x/x.gcode", info: { plates: [{ print_time_s: 1448, filaments: [{ used_m: "2.19" }] }] } },
             });
       return ok({});
     }),

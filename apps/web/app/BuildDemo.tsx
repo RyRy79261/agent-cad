@@ -2,7 +2,15 @@
 
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
+import { Download, Printer } from "lucide-react";
 import { DEFAULT_API_URL, type BuildResult } from "@agent-cad/types";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
 
 // three.js viewers can't server-render — load them client-side only.
 const StlViewer = dynamic(() => import("@agent-cad/viewer").then((m) => m.StlViewer), {
@@ -20,21 +28,13 @@ interface TemplateInfo {
   name: string;
   description: string;
 }
-
 type TemplateBuildResult = BuildResult & { artifact_urls?: Record<string, string> };
-
 interface SliceInfo {
   print_time_s?: number;
   weight_g?: number | null;
   filaments?: Array<{ used_m?: string; type?: string }>;
 }
-type SliceResult = {
-  ok: boolean;
-  gcode_url?: string;
-  error?: string | null;
-  info?: { plates?: SliceInfo[] };
-};
-
+type SliceResult = { ok: boolean; gcode_url?: string; error?: string | null; info?: { plates?: SliceInfo[] } };
 type Status = "idle" | "building" | "done" | "error";
 type SliceStatus = "idle" | "slicing" | "done" | "error";
 type View = "model" | "gcode";
@@ -52,6 +52,7 @@ export function BuildDemo() {
   const [sliceInfo, setSliceInfo] = useState<SliceInfo | null>(null);
   const [sliceError, setSliceError] = useState<string | null>(null);
   const [view, setView] = useState<View>("model");
+  const [prompt, setPrompt] = useState("calibration cube");
 
   useEffect(() => {
     fetch(`${API_URL}/templates`)
@@ -109,132 +110,190 @@ export function BuildDemo() {
       setView("gcode");
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      // The most common cause is no local slicer — make that legible.
       setSliceError(
         /orcaslicer/i.test(msg)
-          ? "OrcaSlicer isn't installed/configured. See docs/prerequisites.md."
+          ? "OrcaSlicer isn't installed/configured. See the Printer setup page."
           : msg,
       );
       setSliceStatus("error");
     }
   }
 
+  function onPromptSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const name = resolvePrompt(prompt);
+    if (name) buildAndView(name);
+    else setError("Try something like: calibration cube, box, bracket, plate, standoff.");
+  }
+
   const meta = result?.metadata;
   const verification = result?.verification;
+  const busy = status === "building" || sliceStatus === "slicing";
 
   return (
-    <div style={styles.grid}>
-      <section>
-        <h2 style={styles.h2}>1 · Pick a part</h2>
-        <p style={styles.sub}>Each is a known-good parametric template. Click to build it on the server.</p>
-        <div style={styles.gallery}>
-          {templates.length === 0 && !error ? <Hint>Loading templates…</Hint> : null}
-          {templates.map((t) => (
-            <button
-              key={t.name}
-              onClick={() => buildAndView(t.name)}
-              disabled={status === "building" || sliceStatus === "slicing"}
-              style={{ ...styles.card, ...(active === t.name ? styles.cardActive : {}) }}
-            >
-              <strong style={{ textTransform: "capitalize" }}>{t.name}</strong>
-              <span style={styles.cardDesc}>{t.description}</span>
-            </button>
-          ))}
-        </div>
-
-        {error ? <p style={styles.error}>⚠ {error}</p> : null}
+    <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(300px,1fr)_minmax(340px,1.2fr)]">
+      <div className="space-y-6">
+        <section>
+          <SectionTitle>1 · Describe a part</SectionTitle>
+          <form onSubmit={onPromptSubmit} className="flex gap-2">
+            <Input
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder="e.g. a calibration cube"
+              disabled={busy}
+              aria-label="describe a part"
+            />
+            <Button type="submit" disabled={busy}>
+              {status === "building" ? "Designing…" : "Design it"}
+            </Button>
+          </form>
+          <p className="mb-2 mt-2 text-sm text-muted-foreground">…or pick a known-good template:</p>
+          <div className="grid grid-cols-2 gap-2">
+            {templates.map((t) => (
+              <button
+                key={t.name}
+                onClick={() => buildAndView(t.name)}
+                disabled={busy}
+                className={cn(
+                  "rounded-lg border p-3 text-left transition-colors hover:bg-accent disabled:opacity-50",
+                  active === t.name && "border-primary ring-1 ring-primary",
+                )}
+              >
+                <div className="font-semibold capitalize">{t.name}</div>
+                <div className="text-xs leading-snug text-muted-foreground">{t.description}</div>
+              </button>
+            ))}
+          </div>
+          {error ? (
+            <Alert variant="destructive" className="mt-3">
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          ) : null}
+        </section>
 
         {status !== "idle" ? (
-          <>
-            <h2 style={styles.h2}>2 · Build result</h2>
-            {status === "building" ? <Hint>Building “{active}” on the server…</Hint> : null}
+          <section>
+            <SectionTitle>2 · Build result</SectionTitle>
+            {status === "building" ? (
+              <Hint>Building “{active}” on the server…</Hint>
+            ) : null}
             {status === "done" && meta ? (
-              <div style={styles.facts}>
-                <Fact label="Size">
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="secondary">
                   {meta.bounding_box_mm
                     ? `${meta.bounding_box_mm.x} × ${meta.bounding_box_mm.y} × ${meta.bounding_box_mm.z} mm`
                     : "—"}
-                </Fact>
-                <Fact label="Bed fit">{meta.fits_build_volume ? "✓ fits" : "⚠ no"}</Fact>
-                <Fact label="Printable">
-                  {verification ? (verification.printable ? "✓ yes" : "✗ no") : "—"}
-                </Fact>
+                </Badge>
+                <Badge variant={meta.fits_build_volume ? "secondary" : "destructive"}>
+                  {meta.fits_build_volume ? "✓ fits bed" : "⚠ doesn't fit"}
+                </Badge>
+                <Badge variant={verification?.printable ? "secondary" : "destructive"}>
+                  {verification?.printable ? "✓ printable" : "✗ not printable"}
+                </Badge>
               </div>
             ) : null}
-          </>
+          </section>
         ) : null}
 
         {status === "done" ? (
-          <>
-            <h2 style={styles.h2}>3 · Slice for printing</h2>
-            <button
-              onClick={sliceForPrint}
-              disabled={sliceStatus === "slicing"}
-              style={styles.primary}
-            >
-              {sliceStatus === "slicing" ? "Slicing…" : "🖨 Slice for Ender 5 S1"}
-            </button>
-            {sliceError ? <p style={styles.error}>⚠ {sliceError}</p> : null}
+          <section>
+            <SectionTitle>3 · Slice for printing</SectionTitle>
+            <Button onClick={sliceForPrint} disabled={sliceStatus === "slicing"} className="gap-2">
+              <Printer className="h-4 w-4" />
+              {sliceStatus === "slicing" ? "Slicing…" : "Slice for Ender 5 S1"}
+            </Button>
+            {sliceError ? (
+              <Alert variant="destructive" className="mt-3">
+                <AlertDescription>{sliceError}</AlertDescription>
+              </Alert>
+            ) : null}
             {sliceStatus === "done" ? (
-              <>
-                <div style={styles.facts}>
-                  <Fact label="Print time">{fmtTime(sliceInfo?.print_time_s)}</Fact>
-                  <Fact label="Filament">{fmtFilament(sliceInfo)}</Fact>
+              <div className="mt-3 space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  <Badge variant="outline">⏱ {fmtTime(sliceInfo?.print_time_s)}</Badge>
+                  <Badge variant="outline">🧵 {fmtFilament(sliceInfo)}</Badge>
                 </div>
                 {gcodeUrl ? (
-                  <button onClick={() => downloadGcode(gcodeUrl, `${active}.gcode`)} style={styles.primary}>
-                    ⬇ Download g-code (for SD card)
-                  </button>
+                  <Button
+                    variant="secondary"
+                    className="gap-2"
+                    onClick={() => downloadGcode(gcodeUrl, `${active}.gcode`)}
+                  >
+                    <Download className="h-4 w-4" />
+                    Download g-code (for SD card)
+                  </Button>
                 ) : null}
                 <CalibrationGuide />
-              </>
+              </div>
             ) : null}
-          </>
+          </section>
         ) : null}
-      </section>
+      </div>
 
-      <section>
-        <div style={styles.tabs}>
-          <Tab on={() => setView("model")} active={view === "model"} disabled={!stlUrl}>
-            Model
-          </Tab>
-          <Tab on={() => setView("gcode")} active={view === "gcode"} disabled={!gcodeUrl}>
-            Toolpath
-          </Tab>
-        </div>
-        <div style={styles.viewer}>
+      <div className="space-y-2">
+        <Tabs value={view} onValueChange={(v) => setView(v as View)}>
+          <TabsList>
+            <TabsTrigger value="model" disabled={!stlUrl}>
+              Model
+            </TabsTrigger>
+            <TabsTrigger value="gcode" disabled={!gcodeUrl}>
+              Toolpath
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <Card className="h-[460px] overflow-hidden p-0">
           {view === "gcode" && gcodeUrl ? (
             <GcodeViewer url={gcodeUrl} />
           ) : stlUrl ? (
             <StlViewer url={stlUrl} />
           ) : (
-            <Hint>{status === "building" ? "Rendering…" : "Build a part to see it here."}</Hint>
+            <div className="flex h-full items-center justify-center">
+              <p className="text-sm text-muted-foreground">
+                {status === "building" ? "Rendering…" : "Build a part to see it here."}
+              </p>
+            </div>
           )}
-        </div>
-        <p style={styles.sub}>Drag to orbit · scroll to zoom{view === "gcode" ? " · slider scrubs layers" : ""}</p>
-      </section>
+        </Card>
+        <p className="text-sm text-muted-foreground">
+          Drag to orbit · scroll to zoom{view === "gcode" ? " · slider scrubs layers" : ""}
+        </p>
+      </div>
     </div>
   );
 }
 
 function CalibrationGuide() {
   return (
-    <details style={styles.guide}>
-      <summary style={{ cursor: "pointer", fontWeight: 600 }}>🛠 Get your printer ready (bed leveling)</summary>
-      <ol style={{ fontSize: "0.82rem", color: "#444", lineHeight: 1.5, paddingLeft: 18 }}>
-        <li>Home Z, move the nozzle to the centre. Slide a sheet of A4 paper under it and lower until you feel light drag (~0.1 mm).</li>
-        <li>Repeat at each of the 4 corners, turning that corner&apos;s knob to the same paper-drag feel.</li>
-        <li>Run <code>AUTO-LVL → Start</code> (CR-Touch) until it reaches 100%.</li>
-        <li>On the first layer, nudge the live <strong>Z-offset</strong> until the lines just squish together.</li>
-        <li>Copy the g-code to a FAT32 SD card (short name, in the root) and print.</li>
+    <details className="rounded-lg border bg-muted/40 p-3 text-sm">
+      <summary className="cursor-pointer font-semibold">🛠 Get your printer ready (bed leveling)</summary>
+      <ol className="ml-4 mt-2 list-decimal space-y-1 text-muted-foreground">
+        <li>Home Z, move the nozzle to the centre. Slide an A4 paper under it and lower until you feel light drag (~0.1 mm).</li>
+        <li>Repeat at each of the 4 corners, turning that corner’s knob to the same feel.</li>
+        <li>
+          Run <code>AUTO-LVL → Start</code> (CR-Touch) until it reaches 100%.
+        </li>
+        <li>
+          On the first layer, nudge the live <strong>Z-offset</strong> until the lines just squish together.
+        </li>
       </ol>
-      <p style={{ fontSize: "0.78rem", color: "#888", margin: 0 }}>Full guide: docs/printer-ender5s1.md</p>
+      <p className="mt-2">
+        <a href="/setup" className="font-semibold text-primary hover:underline">
+          Full step-by-step setup guide →
+        </a>
+      </p>
     </details>
   );
 }
 
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-muted-foreground">{children}</h2>;
+}
+
+function Hint({ children }: { children: React.ReactNode }) {
+  return <p className="text-sm text-muted-foreground">{children}</p>;
+}
+
 async function downloadGcode(url: string, filename: string) {
-  // Cross-origin download attribute is ignored, so fetch the blob and save it.
   const blob = await (await fetch(url)).blob();
   const href = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -278,61 +337,13 @@ async function pollJob(jobId: string, timeoutMs = 60_000) {
   throw new Error("job timed out");
 }
 
-function Hint({ children }: { children: React.ReactNode }) {
-  return <p style={{ color: "#999", margin: 0 }}>{children}</p>;
+/** Map a free-text prompt to a known-good template (fixed mapping for now). */
+function resolvePrompt(text: string): string | null {
+  const t = text.toLowerCase();
+  if (/calibrat|cube/.test(t)) return "cube";
+  if (/bracket|angle/.test(t)) return "bracket";
+  if (/plate|mount/.test(t)) return "plate";
+  if (/standoff|spacer|pillar/.test(t)) return "standoff";
+  if (/box|enclosure|case|container|tray/.test(t)) return "box";
+  return null;
 }
-
-function Fact({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div style={styles.factLabel}>{label}</div>
-      <div>{children}</div>
-    </div>
-  );
-}
-
-function Tab({
-  on,
-  active,
-  disabled,
-  children,
-}: {
-  on: () => void;
-  active: boolean;
-  disabled?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={on}
-      disabled={disabled}
-      style={{
-        ...styles.tab,
-        ...(active ? styles.tabActive : {}),
-        opacity: disabled ? 0.4 : 1,
-        cursor: disabled ? "default" : "pointer",
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
-const styles: Record<string, React.CSSProperties> = {
-  grid: { display: "grid", gridTemplateColumns: "minmax(300px, 1fr) minmax(320px, 1.2fr)", gap: "2rem", alignItems: "start" },
-  h2: { fontSize: "1rem", margin: "1.5rem 0 0.25rem" },
-  sub: { color: "#888", fontSize: "0.85rem", margin: "0.5rem 0 0.75rem" },
-  gallery: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" },
-  card: { display: "flex", flexDirection: "column", gap: 4, textAlign: "left", padding: "0.75rem", border: "1px solid #ddd", borderRadius: 8, background: "#fff", cursor: "pointer" },
-  cardActive: { border: "1px solid #c9a27a", boxShadow: "0 0 0 2px #c9a27a33" },
-  cardDesc: { color: "#888", fontSize: "0.72rem", lineHeight: 1.3 },
-  primary: { padding: "0.6rem 1rem", border: "1px solid #c9a27a", borderRadius: 8, background: "#c9a27a", color: "#fff", fontWeight: 600, cursor: "pointer", margin: "0.25rem 0" },
-  facts: { display: "flex", gap: "1.5rem", margin: "0.5rem 0", flexWrap: "wrap" },
-  factLabel: { color: "#999", fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: "0.03em" },
-  error: { color: "#c62828", fontSize: "0.85rem" },
-  guide: { marginTop: "0.75rem", padding: "0.5rem 0.75rem", border: "1px solid #eee", borderRadius: 8, background: "#fafafa" },
-  tabs: { display: "flex", gap: 4, marginBottom: 6 },
-  tab: { padding: "0.35rem 0.9rem", border: "1px solid #ddd", borderRadius: 6, background: "#fff", fontSize: "0.85rem" },
-  tabActive: { border: "1px solid #c9a27a", background: "#c9a27a22", fontWeight: 600 },
-  viewer: { height: 460, border: "1px solid #ddd", borderRadius: 8, background: "linear-gradient(#fafafa,#eee)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden" },
-};
