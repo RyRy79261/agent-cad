@@ -11,10 +11,15 @@ export interface GcodeViewerProps {
   className?: string;
 }
 
+interface Vec3 {
+  lerp(v: Vec3, alpha: number): void;
+}
 /** Minimal slice of gcode-preview's WebGLPreview we drive (it's loaded lazily). */
 interface Preview {
   endLayer?: number;
   readonly maxLayerIndex: number;
+  camera: { position: Vec3 };
+  controls: { target: Vec3; update(): void };
   processGCode(gcode: string): void;
   render(): void;
 }
@@ -49,6 +54,11 @@ export function GcodeViewer({ url, buildVolume = ENDER_5_S1.build_volume, classN
         const gcode = await (await fetch(url)).text();
         if (cancelled) return;
         preview.processGCode(gcode);
+        preview.render();
+        // gcode-preview frames the whole 220×220 bed; dolly toward the part so a
+        // small part (e.g. a 20mm cube) fills the view instead of looking lost.
+        preview.camera.position.lerp(preview.controls.target, 0.62);
+        preview.controls.update();
         preview.render();
         previewRef.current = preview;
         const max = preview.maxLayerIndex || 0;
