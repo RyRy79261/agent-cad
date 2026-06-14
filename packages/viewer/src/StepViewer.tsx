@@ -21,6 +21,9 @@ export interface StepViewerProps {
  *   const result = occt.ReadStepFile(buf, null);
  *   // result.meshes[].attributes.position.array -> THREE.BufferAttribute
  *
+ * NOTE: like StlViewer, STEP geometry is Z-up (printing) — rotate it onto three.js's
+ * Y-up (`geometry.rotateX(-Math.PI / 2)`) so the part stands upright.
+ *
  * Kept as a placeholder so the package stays buildable before the UI pass.
  */
 export function StepViewer({ url, className }: StepViewerProps) {
