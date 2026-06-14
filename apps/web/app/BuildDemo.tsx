@@ -513,7 +513,7 @@ export function BuildDemo() {
                 <NumField label="Retraction" unit="mm" value={retraction} onChange={setRetraction} min={0} max={6} step={0.1} disabled={slicing} tip={TIPS.retraction} />
               </div>
 
-              <details className="mt-3 border-t pt-2">
+              <details open className="mt-3 border-t pt-2">
                 <summary className="cursor-pointer text-sm font-medium">Quality &amp; structure</summary>
                 <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-2">
                   <SelectField label="Layer height" unit="mm" value={String(layerHeight)} onChange={(v) => setLayerHeight(Number(v))} options={["0.12", "0.16", "0.2", "0.24", "0.28"]} disabled={slicing} tip={TIPS.layerHeight} />
@@ -526,7 +526,7 @@ export function BuildDemo() {
                 </div>
               </details>
 
-              <details className="mt-2 border-t pt-2">
+              <details open className="mt-2 border-t pt-2">
                 <summary className="cursor-pointer text-sm font-medium">Supports</summary>
                 <div className="mt-2 grid grid-cols-2 items-end gap-x-3 gap-y-2">
                   <label className="flex items-center gap-2 text-sm">
