@@ -250,7 +250,11 @@ function CalibrationGuide() {
         <li>On the first layer, nudge the live <strong>Z-offset</strong> until the lines just squish together.</li>
         <li>Copy the g-code to a FAT32 SD card (short name, in the root) and print.</li>
       </ol>
-      <p style={{ fontSize: "0.78rem", color: "#888", margin: 0 }}>Full guide: docs/printer-ender5s1.md</p>
+      <p style={{ fontSize: "0.78rem", margin: 0 }}>
+        <a href="/setup" style={{ color: "#b5732a", fontWeight: 600 }}>
+          Full step-by-step setup guide →
+        </a>
+      </p>
     </details>
   );
 }

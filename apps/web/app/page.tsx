@@ -9,9 +9,11 @@ import { BuildDemo } from "./BuildDemo";
 export default function Home() {
   return (
     <main style={{ fontFamily: "system-ui, sans-serif", padding: "2rem", maxWidth: 1100, margin: "0 auto" }}>
-      <h1 style={{ marginBottom: 0 }}>agent-cad</h1>
-      <p style={{ color: "#666", marginTop: 4 }}>
-        Prompt → CAD → print, for a Creality Ender 5 S1. Build a part and see it render below.
+      <p style={{ color: "#666", marginTop: 0 }}>
+        Prompt → CAD → print, for a Creality Ender 5 S1. New here?{" "}
+        <a href="/setup" style={{ color: "#b5732a", fontWeight: 600 }}>
+          Set up your printer first →
+        </a>
       </p>
       <BuildDemo />
     </main>
