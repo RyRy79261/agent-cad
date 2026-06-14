@@ -96,6 +96,14 @@ are only ~65% reliable. Prefer the deterministic `verification` checks and
 
 ## Slicing & printing (Ender 5 S1)
 
+- **One-shot slice:** `slice ender5s1 <model.stl>` slices with the bundled Ender 5
+  S1 profiles (committed in `services/slice/src/slicer/profiles/ender5s1/`) and
+  extracts plain g-code. Needs OrcaSlicer (`$ORCA_SLICER_BIN`) — see
+  `docs/prerequisites.md`. The slice service auto-wraps the slicer in `xvfb-run`
+  when there's no display.
+- **Profile gotcha:** the committed machine profile patches `layer_change_gcode` to
+  `G92 E0` — OrcaSlicer's validator rejects the empty Creality default for the
+  relative-extruder (M83) profile.
 - OrcaSlicer CLI emits a **`.gcode.3mf`** archive — the slice service auto-extracts
   `Metadata/plate_1.gcode`. Never hand a `.gcode.3mf` to the printer.
 - SD card: plain `.gcode`, FAT32, **root dir**, short 8.3 name (`slicer.sdcard`).
