@@ -23,6 +23,7 @@ _DIR = Path(__file__).parent
 # name -> one-line description. Kept here (not read from the modules) so listing is
 # cheap and does NOT import build123d.
 _TEMPLATES: dict[str, str] = {
+    "cube": "Solid calibration cube — the canonical first print; measure it to check dimensional accuracy.",
     "box": "Hollow open-top box / enclosure with walls, floor, optional rounded corners and bolt holes.",
     "plate": "Flat mounting plate with rounded corners, top chamfer and a grid of bolt holes.",
     "bracket": "L-shaped angle bracket: horizontal + vertical flange, each with a row of bolt holes.",

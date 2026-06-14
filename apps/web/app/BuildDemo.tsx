@@ -52,6 +52,7 @@ export function BuildDemo() {
   const [sliceInfo, setSliceInfo] = useState<SliceInfo | null>(null);
   const [sliceError, setSliceError] = useState<string | null>(null);
   const [view, setView] = useState<View>("model");
+  const [prompt, setPrompt] = useState("calibration cube");
 
   useEffect(() => {
     fetch(`${API_URL}/templates`)
@@ -119,14 +120,35 @@ export function BuildDemo() {
     }
   }
 
+  function onPromptSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const name = resolvePrompt(prompt);
+    if (name) buildAndView(name);
+    else setError("Try something like: calibration cube, box, bracket, plate, standoff.");
+  }
+
   const meta = result?.metadata;
   const verification = result?.verification;
+  const busy = status === "building" || sliceStatus === "slicing";
 
   return (
     <div style={styles.grid}>
       <section>
-        <h2 style={styles.h2}>1 · Pick a part</h2>
-        <p style={styles.sub}>Each is a known-good parametric template. Click to build it on the server.</p>
+        <h2 style={styles.h2}>1 · Describe a part</h2>
+        <form onSubmit={onPromptSubmit} style={styles.promptRow}>
+          <input
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="e.g. a calibration cube"
+            disabled={busy}
+            aria-label="describe a part"
+            style={styles.promptInput}
+          />
+          <button type="submit" disabled={busy} style={styles.primary}>
+            {status === "building" ? "Designing…" : "Design it"}
+          </button>
+        </form>
+        <p style={styles.sub}>…or pick a known-good template:</p>
         <div style={styles.gallery}>
           {templates.length === 0 && !error ? <Hint>Loading templates…</Hint> : null}
           {templates.map((t) => (
@@ -259,6 +281,18 @@ function fmtFilament(info: SliceInfo | null): string {
   return parts.length ? parts.join(" · ") : "—";
 }
 
+/** Map a free-text prompt to a known-good template (fixed mapping for now;
+ * later this becomes a generated model.py). */
+function resolvePrompt(text: string): string | null {
+  const t = text.toLowerCase();
+  if (/calibrat|cube/.test(t)) return "cube";
+  if (/bracket|angle/.test(t)) return "bracket";
+  if (/plate|mount/.test(t)) return "plate";
+  if (/standoff|spacer|pillar/.test(t)) return "standoff";
+  if (/box|enclosure|case|container|tray/.test(t)) return "box";
+  return null;
+}
+
 async function postJson(url: string) {
   const r = await fetch(url, { method: "POST" });
   if (!r.ok) throw new Error(`${url} → ${r.status}`);
@@ -322,6 +356,8 @@ const styles: Record<string, React.CSSProperties> = {
   grid: { display: "grid", gridTemplateColumns: "minmax(300px, 1fr) minmax(320px, 1.2fr)", gap: "2rem", alignItems: "start" },
   h2: { fontSize: "1rem", margin: "1.5rem 0 0.25rem" },
   sub: { color: "#888", fontSize: "0.85rem", margin: "0.5rem 0 0.75rem" },
+  promptRow: { display: "flex", gap: 8, alignItems: "stretch" },
+  promptInput: { flex: 1, padding: "0.55rem 0.7rem", border: "1px solid #ccc", borderRadius: 8, fontSize: "0.95rem" },
   gallery: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" },
   card: { display: "flex", flexDirection: "column", gap: 4, textAlign: "left", padding: "0.75rem", border: "1px solid #ddd", borderRadius: 8, background: "#fff", cursor: "pointer" },
   cardActive: { border: "1px solid #c9a27a", boxShadow: "0 0 0 2px #c9a27a33" },

@@ -20,7 +20,7 @@ TEMPLATE_NAMES = [t.name for t in list_templates()]
 
 
 def test_registry_lists_templates() -> None:
-    assert set(TEMPLATE_NAMES) == {"box", "plate", "bracket", "standoff"}
+    assert set(TEMPLATE_NAMES) == {"cube", "box", "plate", "bracket", "standoff"}
     for t in list_templates():
         assert t.description
         assert t.path.exists()
