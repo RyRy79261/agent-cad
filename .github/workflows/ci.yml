@@ -17,6 +17,8 @@ jobs:
       PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true # pull the committed 3DBenchy STL (sample-model test loads it)
 
       # OCCT / build123d (OCP) need OpenGL system libs even for headless export.
       - name: Install OpenGL libs

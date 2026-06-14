@@ -141,7 +141,7 @@ export function BuildDemo() {
   async function buildAndView(name: string) {
     startRun(name, "template");
     try {
-      const ref = await postJson(`${API_URL}/templates/${name}/build`);
+      const ref = await postJson(`${API_URL}/templates/${encodeURIComponent(name)}/build`);
       const job = await pollJob(ref.job_id);
       if (job.status !== "succeeded") throw new Error(job.error ?? "build failed");
       const res = job.result as TemplateBuildResult;
@@ -188,7 +188,7 @@ export function BuildDemo() {
   async function stageAndView(name: string) {
     startRun(name, "sample");
     try {
-      const ref = await postJson(`${API_URL}/samples/${name}/stage`);
+      const ref = await postJson(`${API_URL}/samples/${encodeURIComponent(name)}/stage`);
       const job = await pollJob(ref.job_id);
       if (job.status !== "succeeded") throw new Error(job.error ?? "staging failed");
       const res = job.result as { artifact_urls?: Record<string, string>; metadata?: DisplayResult["metadata"] };
@@ -231,7 +231,7 @@ export function BuildDemo() {
       };
       const raw = parseRawOverrides(rawOverrides);
       if (Object.keys(raw).length) body.raw = raw;
-      const ref = await postJson(`${API_URL}/${base}/${active}/slice`, body);
+      const ref = await postJson(`${API_URL}/${base}/${encodeURIComponent(active)}/slice`, body);
       const job = await pollJob(ref.job_id, 180_000);
       const res = (job.result ?? {}) as SliceResult;
       if (job.status !== "succeeded" || !res.gcode_url) {

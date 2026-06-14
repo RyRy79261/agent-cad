@@ -149,6 +149,14 @@ def test_generate_unknown_driver_name_is_clean_error(tmp_path: Path) -> None:
     assert "unknown LLM driver" in result.error
 
 
+def test_generate_negative_max_rounds_is_clean_error(tmp_path: Path) -> None:
+    # max_rounds < 0 must fail cleanly, not crash on an empty attempts list.
+    drv = FakeDriver([f"```python\n{GOOD_SOURCE}```"])
+    result = generate_part("a cube", tmp_path / "p", driver=drv, max_rounds=-1)
+    assert result.ok is False
+    assert "max_rounds" in (result.error or "")
+
+
 def test_generate_no_verify_skips_printability(tmp_path: Path) -> None:
     # Oversize part: would fail verification, but --no-verify accepts any valid build.
     drv = FakeDriver([OVERSIZE_SOURCE])

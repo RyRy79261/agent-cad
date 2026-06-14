@@ -83,7 +83,7 @@ def build_user_prompt(description: str) -> str:
     )
 
 
-def build_retry_prompt(error: str, *, printable: bool) -> str:
+def build_retry_prompt(error: str, *, printable: bool | None) -> str:
     """Feedback turn after a failed build / failed printability check."""
     if printable is False and not error:
         head = "The model built but is NOT printable. Failing checks:"

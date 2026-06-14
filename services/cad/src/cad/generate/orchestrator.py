@@ -11,7 +11,6 @@ the second correction pass — and the cap is surfaced to the caller, never sile
 from __future__ import annotations
 
 import json
-import runpy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -117,6 +116,9 @@ def generate_part(
         ok=False, driver=drv.name, description=description, dest=str(dest), rounds=0,
         model_path=str(model_path),
     )
+    if max_rounds < 0:
+        result.error = "max_rounds must be >= 0"
+        return result
 
     last_build: BuildResult | None = None
     for round_no in range(max_rounds + 1):
@@ -142,7 +144,7 @@ def generate_part(
         if last_build.ok and printable is not False:
             result.ok = True
             result.build = last_build.to_dict()
-            _scaffold_project(dest, model_path)
+            _scaffold_project(dest, last_build.metadata.get("defaults") or {})
             return result
 
         # Failed — feed it back unless we've exhausted the cap.
@@ -187,14 +189,17 @@ def _feedback(build: BuildResult, verify: bool) -> tuple[str, bool | None]:
     return "\n".join(lines) or v.get("summary", "not printable"), False
 
 
-def _scaffold_project(dest: Path, model_path: Path) -> None:
-    """Write params.json (from the model's DEFAULTS) and a print.json stub."""
+def _scaffold_project(dest: Path, defaults: dict[str, Any]) -> None:
+    """Write params.json (the model's DEFAULTS, captured during the build) + a print.json stub.
+
+    ``defaults`` comes from the build result's metadata, so we never re-execute the
+    generated ``model.py`` just to read its ``DEFAULTS``.
+    """
     if not (dest / "params.json").exists():
         try:
-            ns = runpy.run_path(str(model_path))
-            defaults = dict(ns.get("DEFAULTS", {}))
-        except Exception:  # noqa: BLE001 - scaffolding is best-effort
-            defaults = {}
-        (dest / "params.json").write_text(json.dumps(defaults, indent=2) + "\n", encoding="utf-8")
+            payload = json.dumps(defaults, indent=2)
+        except (TypeError, ValueError):  # non-JSON-serialisable defaults — best effort
+            payload = "{}"
+        (dest / "params.json").write_text(payload + "\n", encoding="utf-8")
     if not (dest / "print.json").exists():
         (dest / "print.json").write_text(json.dumps(_PRINT_STUB, indent=2) + "\n", encoding="utf-8")

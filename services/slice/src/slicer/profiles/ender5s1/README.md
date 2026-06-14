@@ -19,9 +19,11 @@ profile export.
   `inner_wall_speed` lowered `40 → 25` mm/s (less melt pressure dumped at corners —
   the best fix available without pressure advance), and `precise_outer_wall` enabled
   (removes wall overlap so the cube measures truer; requires the inner→outer
-  `wall_infill_order`, which we keep). **Accelerations are deliberately left at `0`
-  (firmware-capped 500 mm/s², jerk 8) — lowering them lengthens corner dwell and
-  makes bulging *worse*.** See `docs/troubleshooting-cube.md`.
+  `wall_infill_order`, which we keep). **Process accelerations are deliberately left
+  at `0` (deferring to the firmware cap of 500 mm/s²); jerk is *raised* to 12 in
+  `machine.json` (see above). The rule for corner bulging: do not *lower* accel/jerk —
+  that lengthens corner dwell and makes bulging *worse*.** See
+  `docs/troubleshooting-cube.md`.
 - `filament.json` — "Creality Generic PLA". `fan_max_speed` pinned to `100` (the
   `fdm_filament_pla` base only inherits 80%); full PLA cooling sets each fast layer
   before the next. **Bed temp pinned to 60 °C** on *every* plate type

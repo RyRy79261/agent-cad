@@ -350,7 +350,7 @@ export const SYMPTOMS: Symptom[] = [
     rootCauses: [
       "Nozzle too hot, so plastic keeps oozing during travel moves.",
       "Wet PLA that has absorbed moisture and sputters.",
-      "Our retraction (2 mm) is already short for a Sprite direct-drive; over-retracting risks grinding.",
+      "Our committed retraction is 1 mm (lowered from 2) — a sensible Sprite direct-drive value; over-retracting risks grinding, so tune it rather than cranking it up.",
     ],
     fixes: [
       {
@@ -368,11 +368,11 @@ export const SYMPTOMS: Symptom[] = [
       {
         action: "Run the Retraction test before increasing retraction",
         where: "OrcaSlicer › Calibration › Retraction test (retraction_length)",
-        detail: "For a Sprite direct-drive the sweet spot is usually 0.2–0.5 mm, so our committed 2 mm may be too HIGH. Lower toward the cleanest value to also cut zits.",
+        detail: "For a Sprite direct-drive the sweet spot is ~0.5–1.5 mm; our committed default is 1 mm (down from 2). Run the tower and adjust toward the cleanest value if you still string.",
         impact: "low",
       },
     ],
-    primaryTest: "OrcaSlicer › Calibration › Temperature Tower, then the Retraction test (our 2 mm is likely too high for the Sprite).",
+    primaryTest: "OrcaSlicer › Calibration › Temperature Tower, then the Retraction test (our committed 1 mm is a good Sprite starting point — tune from there).",
     severity: "cosmetic",
   },
   {
@@ -418,14 +418,14 @@ export const SYMPTOMS: Symptom[] = [
       "A vertical line of small bumps or pimples up one edge where each layer starts and stops. Because our seam is “aligned,” they stack neatly on one corner.",
     rootCauses: [
       "Pressure/retraction behaviour at the layer start-stop point, worse because pressure advance is off (no pressure relief at the seam).",
-      "Retraction length not tuned (our 2 mm is likely high for the Sprite direct-drive).",
+      "Retraction length not yet dialed in (committed 1 mm is a reasonable Sprite default; tune to taste).",
       "Seam position “aligned” concentrates all the zits onto one visible edge.",
     ],
     fixes: [
       {
-        action: "Tune retraction (our 2 mm is likely too high)",
+        action: "Tune retraction (committed 1 mm — sweep to the cleanest value)",
         where: "OrcaSlicer › Calibration › Retraction test (retraction_length)",
-        detail: "Run the direct-drive retraction tower; PLA on a Sprite usually lands 0.2–0.5 mm. Lowering it reduces seam zits and extruder skipping.",
+        detail: "Run the direct-drive retraction tower; PLA on a Sprite usually lands ~0.5–1.5 mm. Adjust from the committed 1 mm to cut seam zits and extruder skipping.",
         impact: "medium",
       },
       {
@@ -435,7 +435,7 @@ export const SYMPTOMS: Symptom[] = [
         impact: "low",
       },
     ],
-    primaryTest: "OrcaSlicer › Calibration › Retraction test (our 2 mm is likely too high for the Sprite).",
+    primaryTest: "OrcaSlicer › Calibration › Retraction test (committed 1 mm is a sensible Sprite starting point).",
     severity: "cosmetic",
   },
 ];

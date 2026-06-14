@@ -166,6 +166,18 @@ def test_stage_unknown_sample_is_404() -> None:
     assert client.post("/samples/nope/stage").status_code == 404
 
 
+def test_sample_available_detects_lfs_pointer(tmp_path: Path) -> None:
+    from api.main import _sample_available
+
+    real = tmp_path / "real.stl"
+    real.write_bytes(b"solid x\nfacet ...\n")
+    pointer = tmp_path / "pointer.stl"
+    pointer.write_text("version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 123\n")
+    assert _sample_available(real) is True
+    assert _sample_available(pointer) is False  # unfetched LFS pointer -> not usable
+    assert _sample_available(tmp_path / "missing.stl") is False
+
+
 def test_stage_benchy_serves_stl_when_present() -> None:
     # The committed 3DBenchy may or may not be present (LFS); handle both.
     available = next(s for s in client.get("/samples").json() if s["name"] == "benchy")["available"]

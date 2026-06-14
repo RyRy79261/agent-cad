@@ -306,7 +306,7 @@ flips it on for an overhang part:
 | `support_on_build_plate_only` | 0 | Restrict supports to grow from bed only | off general; on to protect model faces | **✔** | med |
 | `support_speed` | 40 | Support body speed (see §2.3) | 40–80 | **✔** | low |
 | `support_line_width` | 0.38 | Support width (under-nozzle = easier snap) | 0.36–0.45 | **✔** | low |
-| `support_base_pattern_spacing` | 0.2 | ⚠ support density spacing — **0.2 mm is near-solid/wasteful**; most profiles use ~2.5 mm. Review `process.json` | | low |
+| `support_base_pattern_spacing` | **2.5** | Support density spacing — the base default 0.2 mm is near-solid/wasteful, so we set 2.5 mm for removable supports | 2.0–3.0 | **✔** | low |
 
 *Support filament keys (`support_filament`, `support_interface_filament`) are
 locked to 0 — single extruder.* Tree-support branch params and the inherited
@@ -416,7 +416,7 @@ allow-list in the slicer. So a raw editor unlocks the full config surface
 
 **Concrete shape.**
 - UI: a textarea, one `key = value` per line, e.g.
-  ```
+  ```ini
   wall_loops = 3
   top_surface_pattern = monotonic
   gap_fill_target = everywhere

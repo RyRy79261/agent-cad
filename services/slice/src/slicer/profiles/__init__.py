@@ -140,17 +140,20 @@ _RAW_DENYLIST = frozenset({
 })
 
 
-def _committed_key_buckets() -> dict[str, tuple[str, bool]]:
-    """``{key: (bucket, is_array)}`` from the union of our committed profiles.
+def _committed_key_buckets() -> dict[str, tuple[str, int]]:
+    """``{key: (bucket, arity)}`` from the union of our committed profiles.
 
-    Tells the raw router which profile a key belongs to and whether its value is an
-    array (filament temps / per-axis machine limits) or a scalar (most process keys).
+    Tells the raw router which profile a key belongs to and its value *arity*: ``0``
+    for a scalar (most process keys), or the array length for filament temps (``1``)
+    and per-axis/per-extruder machine limits (``2``). A raw value is then replicated
+    to that arity so e.g. ``machine_max_jerk_x=15`` becomes ``["15", "15"]``, not
+    ``["15"]`` — which OrcaSlicer would reject/misread.
     """
-    out: dict[str, tuple[str, bool]] = {}
+    out: dict[str, tuple[str, int]] = {}
     profiles = (("machine", ENDER_5_S1_MACHINE), ("process", ENDER_5_S1_PROCESS), ("filament", ENDER_5_S1_FILAMENT))
     for bucket, path in profiles:
         for key, value in json.loads(Path(path).read_text(encoding="utf-8")).items():
-            out[key] = (bucket, isinstance(value, list))
+            out[key] = (bucket, len(value) if isinstance(value, list) else 0)
     return out
 
 
@@ -173,10 +176,10 @@ def route_raw_overrides(raw: dict[str, str]) -> tuple[dict[str, dict[str, Any]],
         if key in _RAW_DENYLIST:
             warnings.append(f"{key}: refused — load-bearing key, not overridable")
             continue
-        bucket, is_array = keymap.get(key, ("process", False))
+        bucket, arity = keymap.get(key, ("process", 0))
         if key not in keymap:
             warnings.append(f"{key}: unknown key — routed to process as a scalar (OrcaSlicer may ignore it)")
-        buckets[bucket][key] = [str(value)] if is_array else str(value)
+        buckets[bucket][key] = [str(value)] * arity if arity else str(value)
     return {k: v for k, v in buckets.items() if v}, warnings
 
 

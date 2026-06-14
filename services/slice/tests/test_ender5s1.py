@@ -62,13 +62,14 @@ def test_slice_overrides_phase2_knobs() -> None:
 
 def test_route_raw_overrides_buckets_by_committed_shape() -> None:
     ov, warnings = route_raw_overrides({
-        "wall_loops": "4",            # process, scalar
-        "filament_flow_ratio": "0.95",  # filament, array
-        "machine_max_jerk_x": "15",   # machine, array
+        "wall_loops": "4",              # process, scalar
+        "filament_flow_ratio": "0.95",  # filament, 1-element array
+        "machine_max_jerk_x": "15",     # machine, 2-element array (per-extruder)
     })
     assert ov["process"]["wall_loops"] == "4"
     assert ov["filament"]["filament_flow_ratio"] == ["0.95"]
-    assert ov["machine"]["machine_max_jerk_x"] == ["15"]
+    # arity replicated to match the committed 2-element array, not ["15"]
+    assert ov["machine"]["machine_max_jerk_x"] == ["15", "15"]
     assert warnings == []
 
 

@@ -220,6 +220,9 @@ def generate(req: GenerateRequest) -> JobRef:
     """
     from cad.generate import generate_part
 
+    # Deterministic slug by design: re-generating the same prompt updates the part in
+    # place rather than accumulating junk dirs (single-user local tool). Pass an explicit
+    # `name` to keep distinct variants apart; the slug is sanitised by `_slugify`.
     name = _slugify(req.name or req.prompt)
     dest = BUILDS_DIR / name
 
@@ -269,11 +272,22 @@ def _samples() -> dict[str, dict]:
     }
 
 
+def _sample_available(path: Path) -> bool:
+    """A sample is usable only if its STL is the real file — not a missing path or an
+    unfetched Git-LFS pointer (an 11 MB STL is committed via LFS; a clone/CI without
+    ``lfs: true`` leaves a ~130-byte pointer that trimesh can't load)."""
+    try:
+        with path.open("rb") as fh:
+            return not fh.read(64).startswith(b"version https://git-lfs.github.com/spec/")
+    except OSError:
+        return False  # missing / unreadable
+
+
 @app.get("/samples", tags=["cad"])
 def samples() -> list[dict]:
     """Committed reference models that can be staged and sliced (no build step)."""
     return [
-        {"name": n, "description": s["description"], "available": s["stl"].exists()}
+        {"name": n, "description": s["description"], "available": _sample_available(s["stl"])}
         for n, s in _samples().items()
     ]
 
@@ -289,8 +303,11 @@ def stage_sample(name: str) -> JobRef:
     if sample is None:
         raise HTTPException(status_code=404, detail=f"unknown sample {name!r}")
     src = sample["stl"]
-    if not src.exists():
-        raise HTTPException(status_code=409, detail=f"sample {name!r} STL missing at {src}")
+    if not _sample_available(src):
+        raise HTTPException(
+            status_code=409,
+            detail=f"sample {name!r} STL missing or an unfetched Git-LFS pointer at {src}",
+        )
     out_dir = BUILDS_DIR / name
 
     def work() -> dict:
