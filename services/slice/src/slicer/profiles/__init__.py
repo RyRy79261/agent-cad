@@ -118,8 +118,9 @@ def slice_overrides(
         process["seam_position"] = str(seam_position)
     if brim_width is not None:
         process["brim_width"] = str(brim_width)
-        # a width with the inherited "auto_brim" may add nothing — force a real brim.
-        process["brim_type"] = "outer_only" if float(brim_width) > 0 else "auto_brim"
+        # >0 forces a real brim (the inherited "auto_brim" may add nothing); 0 means OFF
+        # (not "auto_brim", which can still auto-decide to add one).
+        process["brim_type"] = "outer_only" if float(brim_width) > 0 else "no_brim"
     if support is not None:
         process["enable_support"] = "1" if support else "0"
     if support_threshold is not None:
@@ -130,13 +131,20 @@ def slice_overrides(
     return {k: v for k, v in (("process", process), ("machine", machine), ("filament", filament)) if v}
 
 
-# Keys an "advanced raw override" must never touch — load-bearing for the pipeline
-# (the G92 E0 layer patch, relative-E/M83 start g-code, the build-volume gate).
+# Keys an "advanced raw override" must never touch — load-bearing for the pipeline.
+# (Any ``*_gcode`` key is also refused by suffix in route_raw_overrides, so custom-gcode
+# injection vectors are covered even if a new one is added to a profile.)
 _RAW_DENYLIST = frozenset({
+    # custom g-code injection vectors (the G92 E0 layer patch, M83 start g-code, …)
     "layer_change_gcode", "machine_start_gcode", "machine_end_gcode",
-    "before_layer_change_gcode", "change_filament_gcode",
+    "before_layer_change_gcode", "change_filament_gcode", "machine_pause_gcode",
+    # firmware contract + build-volume gate
     "use_relative_e_distances", "gcode_flavor",
     "printable_area", "printable_height", "nozzle_diameter",
+    # profile identity / inheritance — overriding these breaks base-profile resolution
+    "type", "name", "inherits", "from", "setting_id", "filament_id",
+    "instantiation", "print_settings_id", "printer_settings_id",
+    "compatible_printers", "compatible_printers_condition",
 })
 
 
@@ -173,13 +181,20 @@ def route_raw_overrides(raw: dict[str, str]) -> tuple[dict[str, dict[str, Any]],
         key = raw_key.strip()
         if not key:
             continue
-        if key in _RAW_DENYLIST:
+        if key in _RAW_DENYLIST or key.endswith("_gcode"):
             warnings.append(f"{key}: refused — load-bearing key, not overridable")
             continue
         bucket, arity = keymap.get(key, ("process", 0))
         if key not in keymap:
             warnings.append(f"{key}: unknown key — routed to process as a scalar (OrcaSlicer may ignore it)")
-        buckets[bucket][key] = [str(value)] * arity if arity else str(value)
+        # arity 0 = scalar; 2 = per-axis/per-extruder pair; everything else a 1-element
+        # array (never broadcast a scalar across a long list like compatible_printers).
+        if arity == 2:
+            buckets[bucket][key] = [str(value), str(value)]
+        elif arity >= 1:
+            buckets[bucket][key] = [str(value)]
+        else:
+            buckets[bucket][key] = str(value)
     return {k: v for k, v in buckets.items() if v}, warnings
 
 

@@ -25,10 +25,10 @@ research pass (multi-agent, 19/19 claims stood under adversarial review) conclud
   no-op**. The real cure needs a firmware flash (TH3D Unified 2 / Klipper) — which
   the project owner has chosen **not** to do (stay stock).
 - **The expert's "smooth the acceleration" instinct is the wrong lever** and would
-  backfire: lowering acceleration *lengthens* the corner dwell and makes bulging
-  **worse**. Our acceleration is already firmware-capped low (500 mm/s², jerk 8) —
-  there is nothing aggressive to smooth. Acceleration/jerk is the lever for
-  *ringing*, the opposite artifact.
+  backfire: *lowering* acceleration/jerk *lengthens* the corner dwell and makes bulging
+  **worse**. Acceleration stays firmware-capped (500 mm/s²); jerk is instead *raised* to
+  25 (`machine_max_jerk_x/y`) to shorten the corner dwell. Lowering accel/jerk is the
+  lever for *ringing*, the opposite artifact.
 
 ## The firmware-free tune (applied to the committed profiles)
 

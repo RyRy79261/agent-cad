@@ -212,6 +212,23 @@ def test_slice_empty_body_ok() -> None:
     assert client.post("/templates/plate/slice", json={}).status_code == 409
 
 
+def test_slice_raw_overrides_echoed_and_denylisted() -> None:
+    # The raw-override routing runs before OrcaSlicer (which fails gracefully without
+    # the binary), so the echoed raw map + denylist warnings are asserted CI-safely.
+    build = _poll(client.post("/templates/box/build").json()["job_id"])
+    assert build["status"] == "succeeded", build
+    ref = client.post(
+        "/templates/box/slice",
+        json={"raw": {"layer_change_gcode": "", "wall_loops": "5"}},
+    ).json()
+    job = _poll(ref["job_id"], timeout=180)
+    result = job.get("result") or {}
+    assert result.get("raw_overrides") == {"layer_change_gcode": "", "wall_loops": "5"}
+    # the load-bearing g-code key is refused; the valid one isn't warned about
+    warnings = result.get("override_warnings") or []
+    assert any("layer_change_gcode" in w and "refused" in w for w in warnings)
+
+
 def test_build_then_slice_to_gcode() -> None:
     # Build, then slice. Succeeds with a gcode_url when OrcaSlicer is installed;
     # fails gracefully (clear error) when it isn't (e.g. CI) — never crashes.

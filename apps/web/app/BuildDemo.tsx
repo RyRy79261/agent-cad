@@ -31,7 +31,7 @@ const TIPS = {
   jerk: "How abruptly the nozzle can change direction. Higher = sharper corners (less bulge) but risks ringing; lower = smoother but rounder corners.",
   bedTemp: "Heated-bed temperature. PLA grips a textured plate best around 55–60 °C. Too cold = poor first-layer adhesion / warping.",
   nozzleTemp: "How hot the molten plastic is. PLA ~200 °C. Too low = weak/under-extruded; too high = stringing.",
-  flow: "Multiplier on how much plastic is pushed. 0.98 = 2% under nominal. Lower if walls measure oversize — calibrate, don't guess.",
+  flow: "Multiplier on how much plastic is pushed. 0.95 = 5% under nominal. Lower if walls measure oversize — calibrate, don't guess.",
   retraction: "How far filament is pulled back on travel moves to stop oozing/stringing. The Sprite direct drive likes ~0.5–1.5 mm.",
   layerHeight: "Thickness of each printed layer. Smaller = smoother & more detail but slower; 0.2 mm is the reliable default.",
   wallLoops: "Number of perimeter outlines (shells) around each layer. More = stronger & more watertight; 2 is standard, 3–4 for sturdy parts.",

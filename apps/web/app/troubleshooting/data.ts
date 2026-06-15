@@ -187,7 +187,7 @@ export const SYMPTOMS: Symptom[] = [
       "Thin, weak-looking walls with visible gaps or pinholes between perimeters, lines that don’t fully fuse, and a cube that looks slightly translucent or undersized.",
     rootCauses: [
       "Nozzle temperature too low for the print speed, so filament can’t melt fast enough.",
-      "Flow ratio slightly too low (ours is 0.98), or a partial clog / grinding in the Sprite gear.",
+      "Flow ratio slightly too low (ours is 0.95), or a partial clog / grinding in the Sprite gear.",
     ],
     fixes: [
       {
@@ -199,7 +199,7 @@ export const SYMPTOMS: Symptom[] = [
       {
         action: "Calibrate flow ratio (don’t change E-steps from one cube)",
         where: "OrcaSlicer › Calibration › Flow Rate (Pass 1 then Pass 2)",
-        detail: "If the calibrated value lands above 0.98, set it in Filament › Flow ratio. A constant error that doesn’t scale with part size is flow, not steps-per-mm.",
+        detail: "If the calibrated value lands above 0.95, set it in Filament › Flow ratio. A constant error that doesn’t scale with part size is flow, not steps-per-mm.",
         impact: "medium",
       },
       {
@@ -228,7 +228,7 @@ export const SYMPTOMS: Symptom[] = [
         action: "Lower flow ratio via the Flow Rate calibration",
         where: "OrcaSlicer › Calibration › Flow Rate (filament_flow_ratio)",
         detail:
-          "Run Pass 1 → Pass 2 and apply the value, OR compute from the cube: new flow = 0.98 × (20.0 / average of measured X and Y). Only when X and Y are oversize by the same amount.",
+          "Run Pass 1 → Pass 2 and apply the value, OR compute from the cube: new flow = 0.95 × (20.0 / average of measured X and Y). Only when X and Y are oversize by the same amount.",
         impact: "high",
       },
       {

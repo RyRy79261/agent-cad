@@ -12,6 +12,13 @@ only because the profile lineage runs through Bambu Studio / Creality presets.
 > overrides, slice the copy). The CLI has no reliable per-key flag, so **every**
 > override goes through that copy-and-patch path.
 
+> **Snapshot note (post-audit tuning).** The committed *values* in the tables below are
+> from the settings audit; the profile was tuned afterwards to fight corner bulging.
+> **Current committed values** (source of truth: the profiles `README.md`): **jerk 25**,
+> **flow 0.95**, **retraction 1 mm**, **gap_fill_target = everywhere**,
+> **enable_prime_tower = 0**, bed 60 °C, walls 25 mm/s. The Appendix items below were all
+> reconciled in this PR.
+
 ---
 
 ## 1. Summary
@@ -164,7 +171,7 @@ default, so the **caps below are the de-facto print-accel ceiling**.
 | `default_acceleration` | 0 | Slicer baseline accel (0 = trust firmware/caps) | 0, or 500–1000 to take slicer control | **✔** | high |
 | `outer_wall_acceleration` | 500 | Perimeter accel — only non-zero accel emitted; dominates finish | 300–1000; 500 safe on no-input-shaping S1 | | high |
 | `machine_max_acceleration_x` / `_y` | 500,500 | Per-axis accel caps (`M201 X/Y`) — raise together to unlock speed | 500 safe; 1000–2500 achievable | **✔** | med |
-| `machine_max_jerk_x` / `_y` | 12,12 | Classic-jerk cornering cap (`M205 X/Y`) — real ringing lever | 8–12; **drop to 8** to fix ghosting | **✔** | med |
+| `machine_max_jerk_x` / `_y` | 25,25 | Classic-jerk cornering cap (`M205 X/Y`) | *raised* to 25 to fight corner bulging (shorter corner dwell); do **not** lower it for bulging — that worsens it (lowering jerk is the *ringing* lever) | **✔** | med |
 | `inner_wall_acceleration` | 0 | Hidden-wall accel (0 → default) | 0 or 1000–2000 for speed | **✔** | med |
 | `initial_layer_acceleration` | 0 | First-layer accel (0 → firmware) | 0 or 300–500 | **✔** | med |
 | `top_surface_acceleration` | 0 | Top-face accel (0 → default; match outer_wall for uniform finish) | 0 or 500 | **✔** | med |
@@ -463,9 +470,11 @@ while the denylist + shape/key validation contain the blast radius.
 
 ---
 
-## Appendix — known discrepancies worth reconciling
+## Appendix — discrepancies surfaced by the audit (reconciled in this PR)
 
-Surfaced by the audit; harmless today but worth a cleanup pass:
+Found by the audit and **fixed in this PR**: `support_base_pattern_spacing` 0.2→2.5,
+`gap_fill_target`→everywhere, `retraction_length` 2→1, `printable_height` 300→280,
+`enable_prime_tower`→0. Remaining notes (harmless, in-profile state):
 
 - **`curr_bed_type` = "Cool Plate"** but `default_bed_type` = "Textured PEI Plate".
   Both resolve to 60 °C so output is unaffected, but the CLI should pin

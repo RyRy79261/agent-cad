@@ -60,6 +60,12 @@ def test_slice_overrides_phase2_knobs() -> None:
     assert ov["machine"]["retraction_length"] == ["1"]
 
 
+def test_slice_overrides_brim_zero_is_off() -> None:
+    # brim_width 0 must turn the brim OFF, not leave "auto_brim" (which can still add one).
+    ov = slice_overrides(brim_width=0)
+    assert ov["process"]["brim_type"] == "no_brim"
+
+
 def test_route_raw_overrides_buckets_by_committed_shape() -> None:
     ov, warnings = route_raw_overrides({
         "wall_loops": "4",              # process, scalar
@@ -85,6 +91,19 @@ def test_route_raw_overrides_refuses_denylisted_keys() -> None:
     assert "layer_change_gcode" not in ov.get("machine", {})
     assert ov["process"]["wall_loops"] == "3"
     assert any("layer_change_gcode" in w and "refused" in w for w in warnings)
+
+
+def test_route_raw_overrides_refuses_gcode_suffix_and_structural_keys() -> None:
+    ov, warnings = route_raw_overrides({
+        "machine_pause_gcode": "M0",   # *_gcode suffix -> refused
+        "inherits": "evil_profile",    # structural identity key -> refused
+        "compatible_printers": "x",    # long-array structural key -> refused
+        "outer_wall_speed": "30",      # legit -> passes
+    })
+    for k in ("machine_pause_gcode", "inherits", "compatible_printers"):
+        assert all(k not in b for b in ov.values())
+        assert any(k in w and "refused" in w for w in warnings)
+    assert ov["process"]["outer_wall_speed"] == "30"
 
 
 def test_merge_overrides_raw_wins() -> None:

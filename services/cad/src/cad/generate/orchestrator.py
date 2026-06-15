@@ -172,7 +172,8 @@ def _is_printable(build: BuildResult, verify: bool) -> bool | None:
 
 def _summary(build: BuildResult, verify: bool) -> str:
     if not build.ok:
-        return f"build failed: {(build.error or '').strip().splitlines()[-1][:160] if build.error else 'unknown'}"
+        lines = (build.error or "").strip().splitlines()
+        return f"build failed: {lines[-1][:160] if lines else 'unknown'}"
     if verify and build.verification is not None:
         v = build.verification
         return f"{'printable' if v['printable'] else 'NOT printable'} — {v['summary']}"
