@@ -41,6 +41,32 @@ class PlateInfo:
         raw = self.metadata.get("weight")
         return float(raw) if raw else None
 
+    @property
+    def length_m(self) -> float | None:
+        """Total filament length in metres, summed across the plate's filaments."""
+        total = 0.0
+        found = False
+        for f in self.filaments:
+            if raw := f.get("used_m"):
+                total += float(raw)
+                found = True
+            elif raw_mm := f.get("used_mm"):
+                total += float(raw_mm) / 1000.0
+                found = True
+        return round(total, 3) if found else None
+
+    @property
+    def layer_count(self) -> int | None:
+        """Layer count if slice_info carries it (else None — count the g-code instead)."""
+        for key in ("layer_num", "total_layer_count", "layers", "layer_number"):
+            raw = self.metadata.get(key)
+            if raw:
+                try:
+                    return int(float(raw))
+                except ValueError:
+                    continue
+        return None
+
 
 def list_plate_gcode(archive: str | Path) -> dict[int, str]:
     """Map plate index -> archive member name for every ``plate_N.gcode``."""
@@ -121,6 +147,28 @@ def read_slice_info(archive: str | Path) -> list[PlateInfo]:
     return plates
 
 
+_LAYER_CHANGE_RE = re.compile(r"^;\s*LAYER_CHANGE\b", re.MULTILINE)
+_LAYER_TOTAL_RE = re.compile(
+    r";\s*(?:total[ _]layer(?:[ _](?:number|count))?)\s*[:=]\s*(\d+)", re.IGNORECASE
+)
+
+
+def count_gcode_layers(gcode_path: str | Path) -> int | None:
+    """Count print layers in a plain ``.gcode`` file (OrcaSlicer markers, best-effort).
+
+    Prefers an explicit ``; total layer number: N`` header; falls back to counting
+    ``;LAYER_CHANGE`` markers. Returns None when neither is present.
+    """
+    try:
+        text = Path(gcode_path).read_text(errors="ignore")
+    except OSError:
+        return None
+    if m := _LAYER_TOTAL_RE.search(text):
+        return int(m.group(1))
+    n = len(_LAYER_CHANGE_RE.findall(text))
+    return n or None
+
+
 def summarize(archive: str | Path) -> dict[str, Any]:
     """Compact, UI-friendly summary of an archive's plates."""
     plates = read_slice_info(archive)
@@ -131,6 +179,8 @@ def summarize(archive: str | Path) -> dict[str, Any]:
                 "index": pl.index,
                 "print_time_s": pl.print_time_s,
                 "weight_g": pl.weight_g,
+                "length_m": pl.length_m,
+                "layer_count": pl.layer_count,
                 "filaments": pl.filaments,
                 "metadata": pl.metadata,
             }
