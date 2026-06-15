@@ -174,6 +174,9 @@ export function BuildDemo() {
       const saved = window.localStorage.getItem(VERSIONS_KEY);
       if (saved) {
         const parsed = JSON.parse(saved) as SettingsVersion[];
+        // localStorage isn't available during SSR, so hydrating saved versions must
+        // happen in this mount effect — a one-time synchronous set, not a render loop.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setVersions(parsed);
         const def = parsed.find((v) => v.isDefault);
         if (def) applyBundle(def.settings);
