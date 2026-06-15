@@ -24,7 +24,8 @@ from fastapi.staticfiles import StaticFiles
 
 from api.jobs import JobStore
 from api.projects import get_part, list_parts
-from api.registry import default_printer, load_settings, save_settings, seed_first_run
+from api.descriptor import build_descriptor
+from api.registry import default_printer, get_printer, load_settings, save_settings, seed_first_run
 from api.schemas import (
     BuildRequest,
     ExtractRequest,
@@ -34,6 +35,7 @@ from api.schemas import (
     PrusaSliceRequest,
     ScanCleanRequest,
     Settings,
+    SettingsDescriptor,
     SliceSettings,
 )
 from api.store import Store
@@ -110,6 +112,24 @@ def get_settings() -> Settings:
 def put_settings(settings: Settings) -> Settings:
     """Persist app settings atomically; out-of-range values are rejected (422)."""
     return save_settings(store, settings)
+
+
+@app.get(
+    "/printers/{printer_id}/settings-descriptor",
+    response_model=SettingsDescriptor,
+    tags=["settings"],
+)
+def get_settings_descriptor(printer_id: str, filament: str | None = None) -> SettingsDescriptor:
+    """The schema-driven settings descriptor for a printer (+ optional filament)."""
+    printer = get_printer(store, printer_id)
+    if printer is None:
+        raise HTTPException(status_code=404, detail=f"Unknown printer: {printer_id}")
+    fil = None
+    if filament is not None:
+        fil = next((f for f in printer.filaments if f.id == filament), None)
+        if fil is None:
+            raise HTTPException(status_code=404, detail=f"Unknown filament: {filament}")
+    return build_descriptor(printer, fil)
 
 
 # --------------------------------------------------------------------------- #

@@ -106,6 +106,49 @@ class Settings(BaseModel):
     user_name: str | None = None
 
 
+class SettingsField(BaseModel):
+    """One control in the schema-driven settings UI (§3a).
+
+    ``key`` is the real ``SliceSettings`` field name (the contract); ``label`` is
+    cosmetic. ``min``/``max``/``options`` are DERIVED from ``SliceSettings``; ``step`` is
+    a presentation hint. ``scope`` is the profile bucket (routing); ``binding`` is which
+    screen renders it (not the same as scope).
+    """
+
+    key: str
+    label: str
+    help: str | None = None
+    input_type: Literal["slider", "number", "percent", "select", "toggle", "text"]
+    scope: Literal["process", "machine", "filament", "raw"]
+    binding: Literal["per-slice", "per-filament", "per-printer"]
+    group: str
+    unit: str | None = None
+    default: Any | None = None
+    min: float | None = None
+    max: float | None = None
+    step: float | None = None
+    options: list[str] | None = None
+    advanced: bool = False
+    depends_on: dict[str, Any] | None = None  # e.g. {"field": "support", "equals": true}
+
+
+class SettingsGroup(BaseModel):
+    id: str
+    label: str
+    default_expanded: bool = True
+
+
+class SettingsDescriptor(BaseModel):
+    """Per printer (+ filament) descriptor the UI iterates to render settings controls."""
+
+    printer_id: str
+    printer_name: str
+    filament_id: str | None = None
+    schema_version: int = 1
+    groups: list[SettingsGroup]
+    fields: list[SettingsField]
+
+
 class GenerateRequest(BaseModel):
     """Free-text → generated build123d part."""
 
