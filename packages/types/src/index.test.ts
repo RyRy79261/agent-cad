@@ -3,6 +3,9 @@ import {
   BuildRequest,
   BuildResult,
   ENDER_5_S1,
+  Printer,
+  Settings,
+  SliceSettings,
   Verification,
 } from "./index";
 
@@ -69,5 +72,40 @@ describe("ENDER_5_S1", () => {
     expect(ENDER_5_S1.name).toBe("Creality Ender 5 S1");
     expect(ENDER_5_S1.build_volume).toEqual({ x: 220, y: 220, z: 280 });
     expect(ENDER_5_S1.bed_margin_mm).toBe(5);
+  });
+});
+
+describe("SliceSettings + registry (mirror schemas.py)", () => {
+  it("parses the seeded PLA slice settings", () => {
+    const s = SliceSettings.parse({
+      flow: 0.95, nozzle_temp: 220, bed_temp: 60, wall_speed: 25,
+      retraction_length: 1, layer_height: 0.2, wall_loops: 2,
+      infill_density: 15, infill_pattern: "crosshatch", seam_position: "aligned",
+    });
+    expect(s.flow).toBe(0.95);
+  });
+
+  it("rejects an out-of-enum infill_pattern (the Literal hole closed in Python too)", () => {
+    expect(() => SliceSettings.parse({ infill_pattern: "bogus" })).toThrow();
+  });
+
+  it("rejects out-of-range flow", () => {
+    expect(() => SliceSettings.parse({ flow: 2 })).toThrow();
+  });
+
+  it("Settings defaults active_model and rejects negative auto_clear_days", () => {
+    expect(Settings.parse({}).active_model).toBe("claude-opus-4-8");
+    expect(() => Settings.parse({ auto_clear_days: -1 })).toThrow();
+  });
+
+  it("Printer mirrors the seeded Ender 5 S1 registry record", () => {
+    const p = Printer.parse({
+      id: "ender5s1", name: "Creality Ender 5 S1",
+      build_volume: { x: 220, y: 220, z: 280 },
+      nozzle_diameter_mm: 0.4, firmware: "Marlin", default: true,
+      filaments: [{ id: "pla", name: "Generic PLA", material: "PLA" }],
+    });
+    expect(p.kind).toBe("FDM");
+    expect(p.filaments[0]?.material).toBe("PLA");
   });
 });

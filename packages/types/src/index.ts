@@ -141,6 +141,72 @@ export const PartSummary = z.object({
 });
 export type PartSummary = z.infer<typeof PartSummary>;
 
+// --- Slice settings + registry --------------------------------------------- //
+
+/**
+ * Per-slice overrides — mirrors `SliceSettings` in `schemas.py`. These bounds are the
+ * **single source of truth** for the schema-driven settings UI (the descriptor's
+ * min/max/options derive from here). `infill_pattern`/`seam_position` are enums on both
+ * sides so the server rejects garbage.
+ */
+export const SliceSettings = z.object({
+  infill_density: z.number().int().min(0).max(100).nullish(),
+  wall_speed: z.number().int().min(5).max(120).nullish(),
+  jerk: z.number().int().min(1).max(40).nullish(),
+  bed_temp: z.number().int().min(0).max(110).nullish(),
+  nozzle_temp: z.number().int().min(150).max(300).nullish(),
+  flow: z.number().min(0.8).max(1.2).nullish(),
+  layer_height: z.number().min(0.08).max(0.32).nullish(),
+  wall_loops: z.number().int().min(1).max(10).nullish(),
+  top_layers: z.number().int().min(0).max(20).nullish(),
+  bottom_layers: z.number().int().min(0).max(20).nullish(),
+  infill_pattern: z.enum(["crosshatch", "gyroid", "grid", "cubic"]).nullish(),
+  seam_position: z.enum(["aligned", "nearest", "back", "random"]).nullish(),
+  brim_width: z.number().min(0).max(20).nullish(),
+  support: z.boolean().nullish(),
+  support_threshold: z.number().int().min(0).max(90).nullish(),
+  retraction_length: z.number().min(0).max(6).nullish(),
+  raw: z.record(z.string(), z.string()).nullish(),
+});
+export type SliceSettings = z.infer<typeof SliceSettings>;
+
+/** A material profile saved on a printer — mirrors `FilamentProfile`. */
+export const FilamentProfile = z.object({
+  id: z.string(),
+  name: z.string(),
+  material: z.string(),
+  brand: z.string().nullish(),
+  color: z.string().nullish(),
+  settings: SliceSettings.default({}),
+  default_settings: SliceSettings.default({}),
+});
+export type FilamentProfile = z.infer<typeof FilamentProfile>;
+
+/** A registered machine + its filament profiles — mirrors the `Printer` registry record. */
+export const Printer = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.string().default("FDM"),
+  build_volume: BuildVolume,
+  nozzle_diameter_mm: z.number().default(0.4),
+  firmware: z.string().default("Marlin"),
+  bed_margin_mm: z.number().default(5),
+  default: z.boolean().default(false),
+  filaments: z.array(FilamentProfile).default([]),
+});
+export type Printer = z.infer<typeof Printer>;
+
+/** App settings persisted to `~/.agent-cad/settings.json` — mirrors `Settings`. No `effort` (generation runs at max). */
+export const Settings = z.object({
+  active_model: z.string().default("claude-opus-4-8"),
+  default_printer_id: z.string().nullish(),
+  storage_location: z.string().nullish(),
+  theme: z.string().default("system"),
+  auto_clear_days: z.number().int().min(0).default(0),
+  user_name: z.string().nullish(),
+});
+export type Settings = z.infer<typeof Settings>;
+
 /** Default local API base URL (the FastAPI server in `services/api`). */
 export const DEFAULT_API_URL = "http://127.0.0.1:8420";
 
