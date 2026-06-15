@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 
 from api.jobs import JobStore
 from api.projects import get_part, list_parts
+from api.registry import load_settings, save_settings, seed_first_run
 from api.schemas import (
     BuildRequest,
     ExtractRequest,
@@ -32,10 +33,13 @@ from api.schemas import (
     OrcaSliceRequest,
     PrusaSliceRequest,
     ScanCleanRequest,
+    Settings,
     SliceSettings,
 )
+from api.store import Store
 
 jobs = JobStore()
+store = Store()
 
 # Where API-triggered builds write their artifacts. Served read-only over HTTP at
 # /artifacts so the web viewer can fetch STL/3MF/SVG directly in the browser.
@@ -45,6 +49,7 @@ BUILDS_DIR.mkdir(parents=True, exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ANN201, ARG001
+    seed_first_run(store)  # create + seed ~/.agent-cad on first run (idempotent)
     yield
     jobs.shutdown()
 
@@ -77,6 +82,18 @@ app.mount("/artifacts", StaticFiles(directory=str(BUILDS_DIR)), name="artifacts"
 @app.get("/health", tags=["meta"])
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/settings", response_model=Settings, tags=["settings"])
+def get_settings() -> Settings:
+    """The app settings (seeded defaults when settings.json is absent)."""
+    return load_settings(store)
+
+
+@app.put("/settings", response_model=Settings, tags=["settings"])
+def put_settings(settings: Settings) -> Settings:
+    """Persist app settings atomically; out-of-range values are rejected (422)."""
+    return save_settings(store, settings)
 
 
 # --------------------------------------------------------------------------- #

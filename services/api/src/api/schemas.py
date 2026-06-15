@@ -48,6 +48,64 @@ class SliceSettings(BaseModel):
     )
 
 
+class BuildVolume(BaseModel):
+    """Print envelope in millimetres (mirrors ``cad.printer.BuildVolume``)."""
+
+    x: float
+    y: float
+    z: float
+
+
+class FilamentProfile(BaseModel):
+    """A material profile saved on a printer.
+
+    ``settings`` are the saved per-filament slice values (the ``SliceSettings`` shape,
+    so they map 1:1 onto ``slice_overrides()``); ``default_settings`` is the baseline
+    the "Original" toggle compares/reverts to.
+    """
+
+    id: str
+    name: str
+    material: str  # PLA | PETG | ASA | ABS | TPU …
+    brand: str | None = None
+    color: str | None = None
+    settings: SliceSettings = Field(default_factory=SliceSettings)
+    default_settings: SliceSettings = Field(default_factory=SliceSettings)
+
+
+class Printer(BaseModel):
+    """A registered machine + its filament profiles (the net-new registry record).
+
+    Replaces the hardcoded ``ENDER_5_S1`` constant. ``nozzle_diameter_mm`` and
+    ``firmware`` are net-new display/registry fields the frozen constant lacks.
+    """
+
+    id: str
+    name: str
+    kind: str = "FDM"
+    build_volume: BuildVolume
+    nozzle_diameter_mm: float = 0.4
+    firmware: str = "Marlin"  # editable display metadata; not load-bearing for slicing
+    bed_margin_mm: float = 5.0
+    default: bool = False
+    filaments: list[FilamentProfile] = Field(default_factory=list)
+
+
+class Settings(BaseModel):
+    """App settings persisted to ``~/.agent-cad/settings.json``.
+
+    No ``effort`` knob — generation runs at MAX effort (locked decision);
+    ``active_model`` is the Anthropic model id.
+    """
+
+    active_model: str = "claude-opus-4-8"
+    default_printer_id: str | None = None
+    storage_location: str | None = None
+    theme: str = "system"
+    auto_clear_days: int = Field(default=0, ge=0)
+    user_name: str | None = None
+
+
 class GenerateRequest(BaseModel):
     """Free-text → generated build123d part."""
 
