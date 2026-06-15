@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from api import storage as storage_mod
 from api.chats import (
     append_message,
     create_chat,
@@ -64,6 +65,7 @@ from api.schemas import (
     OrcaSliceRequest,
     Printer,
     PrusaSliceRequest,
+    ResetIn,
     ScanCleanRequest,
     Settings,
     SettingsDescriptor,
@@ -143,6 +145,41 @@ def get_settings() -> Settings:
 def put_settings(settings: Settings) -> Settings:
     """Persist app settings atomically; out-of-range values are rejected (422)."""
     return save_settings(store, settings)
+
+
+# --------------------------------------------------------------------------- #
+# Storage & data management                                                   #
+# --------------------------------------------------------------------------- #
+@app.get("/storage/info", tags=["storage"])
+def storage_info_ep() -> dict:
+    return storage_mod.storage_info(store, app_version=app.version)
+
+
+@app.get("/storage/usage", tags=["storage"])
+def storage_usage_ep() -> dict:
+    """Disk usage computed from the store (chats / models / slices / bytes)."""
+    return storage_mod.usage(store)
+
+
+@app.post("/storage/clear-artifacts", tags=["storage"])
+def clear_artifacts_ep() -> dict:
+    """Delete regenerable geometry/g-code (keeps model.py / chat.json sources)."""
+    return {"bytes_freed": storage_mod.clear_artifacts(store)}
+
+
+@app.post("/storage/clear-chats", tags=["storage"])
+def clear_chats_ep() -> dict:
+    return {"removed": storage_mod.clear_chats(store)}
+
+
+@app.post("/storage/reset", tags=["storage"])
+def storage_reset_ep(body: ResetIn) -> dict:
+    """Danger: wipe the store and re-seed first-run state. Requires confirm=true."""
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="confirm required for reset")
+    storage_mod.reset_store(store)
+    _sync_active_printer()
+    return {"ok": True}
 
 
 @app.get(

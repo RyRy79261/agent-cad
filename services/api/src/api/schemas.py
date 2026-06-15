@@ -200,6 +200,10 @@ class ChatSliceIn(BaseModel):
     settings: SliceSettings | None = None
 
 
+class ResetIn(BaseModel):
+    confirm: bool = False
+
+
 class GenerateRequest(BaseModel):
     """Free-text → generated build123d part."""
 
