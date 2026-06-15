@@ -100,10 +100,15 @@ def build_model(
     err = io.StringIO()
     try:
         with redirect_stdout(out), redirect_stderr(err):
-            shape, engine = _execute(model_path, params)
+            shape, engine, namespace = _execute(model_path, params)
             out_dir.mkdir(parents=True, exist_ok=True)
             artifacts = _export(shape, out_dir, name, formats, engine, view_origin)
             metadata = _metadata(shape, engine)
+            # Capture the model's DEFAULTS so callers can scaffold params.json without
+            # re-executing the source (avoids a second run of generated model code).
+            model_defaults = namespace.get("DEFAULTS")
+            if isinstance(model_defaults, dict):
+                metadata["defaults"] = dict(model_defaults)
             verification = None
             if verify:
                 from cad.verify import verify_build
@@ -132,8 +137,8 @@ def build_model(
     )
 
 
-def _execute(model_path: Path, params: dict[str, Any]) -> tuple[Any, str]:
-    """Run the script and return ``(shape, engine_name)``."""
+def _execute(model_path: Path, params: dict[str, Any]) -> tuple[Any, str, dict[str, Any]]:
+    """Run the script and return ``(shape, engine_name, namespace)``."""
     namespace = runpy.run_path(str(model_path), init_globals={"PARAMS": params})
 
     builder = namespace.get("build")
@@ -150,7 +155,8 @@ def _execute(model_path: Path, params: dict[str, Any]) -> tuple[Any, str]:
     if raw is None:
         raise ValueError("Model produced `None`; expected a CAD shape.")
 
-    return _coerce_shape(raw)
+    shape, engine = _coerce_shape(raw)
+    return shape, engine, namespace
 
 
 def _coerce_shape(raw: Any) -> tuple[Any, str]:

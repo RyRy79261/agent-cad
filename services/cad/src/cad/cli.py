@@ -71,6 +71,19 @@ def main(argv: list[str] | None = None) -> int:
     new.add_argument("dest", help="Destination directory, e.g. projects/my_part")
     new.add_argument("--force", action="store_true", help="Overwrite an existing model.py.")
 
+    gen = sub.add_parser("generate", help="Generate a part from a free-text prompt (LLM).")
+    gen.add_argument("prompt", help="Natural-language description, e.g. 'a 40mm cube with a 10mm bore'.")
+    gen.add_argument("dest", help="Destination directory, e.g. projects/my_part")
+    gen.add_argument(
+        "--driver",
+        help="LLM backend: claude-code (default) | anthropic | ollama. "
+        "Overrides $AGENT_CAD_LLM_DRIVER.",
+    )
+    gen.add_argument("--model", help="Model id/alias for the chosen driver (optional).")
+    gen.add_argument("--max-rounds", type=int, default=2, help="Self-correction passes (default: 2).")
+    gen.add_argument("--no-verify", action="store_true", help="Skip printability checks.")
+    gen.add_argument("--json", action="store_true", help="Emit JSON only.")
+
     args = parser.parse_args(argv)
 
     if args.command == "build":
@@ -79,6 +92,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_templates(args)
     if args.command == "new":
         return _cmd_new(args)
+    if args.command == "generate":
+        return _cmd_generate(args)
     parser.error(f"unknown command {args.command!r}")
     return 2
 
@@ -155,17 +170,61 @@ def _cmd_new(args: argparse.Namespace) -> int:
         return 1
 
     dest.mkdir(parents=True, exist_ok=True)
-    model_path.write_text(t.source())
+    # Explicit UTF-8: template sources contain non-ASCII (×, —, °); an ascii-locale
+    # write would fail independently of $PYTHONUTF8.
+    model_path.write_text(t.source(), encoding="utf-8")
     # --force refreshes the model template only; never clobber edited params/print.
     if not (dest / "params.json").exists():
-        (dest / "params.json").write_text(json.dumps(t.defaults, indent=2) + "\n")
+        (dest / "params.json").write_text(json.dumps(t.defaults, indent=2) + "\n", encoding="utf-8")
     if not (dest / "print.json").exists():
-        (dest / "print.json").write_text(json.dumps(_PRINT_STUB, indent=2) + "\n")
+        (dest / "print.json").write_text(json.dumps(_PRINT_STUB, indent=2) + "\n", encoding="utf-8")
 
     print(f"✓ scaffolded '{t.name}' → {dest}/")
     print(f"  edit {model_path} and {dest}/params.json, then build + verify:")
     print(f"  cad build {model_path} --params {dest}/params.json --verify")
     return 0
+
+
+def _cmd_generate(args: argparse.Namespace) -> int:
+    # Imported lazily: pulls in build123d + the templates, which the lighter
+    # commands (templates/new listing) don't need.
+    from cad.generate import generate_part
+
+    result = generate_part(
+        args.prompt,
+        args.dest,
+        driver=args.driver,
+        model=args.model,
+        max_rounds=args.max_rounds,
+        verify=not args.no_verify,
+    )
+
+    if args.json:
+        print(json.dumps(result.to_dict(), indent=2))
+    else:
+        _print_generate(result)
+    return 0 if result.ok else 1
+
+
+def _print_generate(result) -> None:  # noqa: ANN001 - simple internal helper
+    stream = sys.stdout if result.ok else sys.stderr
+    if result.ok:
+        print(f"✓ generated [{result.driver}] → {result.model_path}")
+    else:
+        print(f"✗ generation failed [{result.driver}]: {result.error}", file=stream)
+    for a in result.attempts:
+        mark = "✓" if a.ok and a.printable is not False else "✗"
+        print(f"  round {a.round}: {mark} {a.summary}", file=stream)
+    # The build verdict mirrors `cad build` output so the two read the same.
+    if result.build:
+        meta = result.build.get("metadata") or {}
+        bbox = meta.get("bounding_box_mm")
+        if bbox:
+            print(f"  bbox : {bbox['x']} × {bbox['y']} × {bbox['z']} mm", file=stream)
+        _print_fit(meta)
+        _print_verification(result.build.get("verification"))
+    if result.ok:
+        print(f"  edit {result.dest}/params.json, then slice. Source is {result.model_path}.")
 
 
 def _print_human(result) -> None:  # noqa: ANN001 - simple internal helper

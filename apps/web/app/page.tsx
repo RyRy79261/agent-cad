@@ -11,7 +11,11 @@ export default function Home() {
       <p className="mb-6 text-muted-foreground">
         Prompt → CAD → print, for a Creality Ender 5 S1. New here?{" "}
         <a href="/setup" className="font-semibold text-primary hover:underline">
-          Set up your printer first →
+          Set up your printer first
+        </a>{" "}
+        ·{" "}
+        <a href="/troubleshooting" className="font-semibold text-primary hover:underline">
+          Cube troubleshooting →
         </a>
       </p>
       <BuildDemo />

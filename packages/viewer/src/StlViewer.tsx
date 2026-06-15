@@ -14,14 +14,22 @@ export interface StlViewerProps {
 
 function Model({ url, color = "#c9a27a" }: { url: string; color?: string }) {
   const geometry = useLoader(STLLoader, url) as BufferGeometry;
-  const centered = useMemo(() => {
-    geometry.center();
-    geometry.computeVertexNormals();
-    return geometry;
+  const prepared = useMemo(() => {
+    // STLs come from the 3D-printing pipeline, which is Z-up (Z = build-plate
+    // height); three.js is Y-up. Without this the part lies on its side (the cube's
+    // top points left, the Benchy is sideways) even though slicing is correct.
+    // Rotate printing-Z onto three.js-Y so the model stands upright, matching the
+    // g-code viewer. Clone first: useLoader caches the geometry by URL, so mutating
+    // it in place would double-rotate on re-mount.
+    const g = geometry.clone();
+    g.rotateX(-Math.PI / 2);
+    g.center();
+    g.computeVertexNormals();
+    return g;
   }, [geometry]);
 
   return (
-    <mesh geometry={centered}>
+    <mesh geometry={prepared}>
       <meshStandardMaterial color={color} roughness={0.6} metalness={0.1} />
     </mesh>
   );

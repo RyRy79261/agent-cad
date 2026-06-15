@@ -18,6 +18,9 @@ function mockFetch(templates: Array<{ name: string; description: string }>) {
       if (String(url).endsWith("/templates")) {
         return { ok: true, json: async () => templates };
       }
+      if (String(url).endsWith("/samples")) {
+        return { ok: true, json: async () => [] };
+      }
       return { ok: true, json: async () => ({}) };
     }),
   );
@@ -66,20 +69,41 @@ describe("BuildDemo", () => {
     expect(await screen.findByText(/OrcaSlicer isn't installed/)).toBeTruthy();
   });
 
-  it("resolves a typed prompt to a template and builds it", async () => {
+  it("generates a part from a free-text prompt, then offers to slice it", async () => {
     mockFlow();
     render(<BuildDemo />);
 
-    // The default prompt "calibration cube" resolves to the cube template.
-    fireEvent.click(await screen.findByText("Design it"));
+    // Free text hits the real /generate endpoint (mocked here).
+    fireEvent.click(await screen.findByText("Generate"));
 
     expect(await screen.findByText(/Slice for Ender 5 S1/)).toBeTruthy();
+    expect(screen.getByText(/Generated with/)).toBeTruthy();
+  });
+
+  it("surfaces a clear error when generation can't make a printable part", async () => {
+    mockFlow({ generateOk: false });
+    render(<BuildDemo />);
+
+    fireEvent.click(await screen.findByText("Generate"));
+
+    expect(await screen.findByText(/couldn't produce a printable part/i)).toBeTruthy();
+  });
+
+  it("stages a sample test model (3DBenchy) then slices it", async () => {
+    mockFlow();
+    render(<BuildDemo />);
+
+    fireEvent.click(await screen.findByText("🚢 benchy"));
+    // Staged model shows its size + an "imported model" badge, then slices.
+    expect(await screen.findByText(/imported model/)).toBeTruthy();
+    fireEvent.click(await screen.findByText(/Slice for Ender 5 S1/));
+    expect(await screen.findByText(/Download g-code/)).toBeTruthy();
   });
 });
 
 const ok = (value: unknown) => ({ ok: true, json: async () => value });
 
-function mockFlow(opts: { sliceOk?: boolean } = {}) {
+function mockFlow(opts: { sliceOk?: boolean; generateOk?: boolean } = {}) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string, init?: { method?: string }) => {
@@ -91,8 +115,22 @@ function mockFlow(opts: { sliceOk?: boolean } = {}) {
           { name: "cube", description: "A calibration cube" },
           { name: "box", description: "A box" },
         ]);
+      if (path.endsWith("/samples"))
+        return ok([{ name: "benchy", description: "The classic torture-test boat.", available: true }]);
       if ((m = path.match(/\/templates\/(\w+)\/build$/))) return ok({ job_id: `build-${m[1]}` });
-      if ((m = path.match(/\/templates\/(\w+)\/slice$/))) return ok({ job_id: `slice-${m[1]}` });
+      if (path.endsWith("/generate")) return ok({ job_id: "gen-1" });
+      if ((m = path.match(/\/samples\/([\w-]+)\/stage$/))) return ok({ job_id: `stage-${m[1]}` });
+      if ((m = path.match(/\/(?:templates|generated|samples)\/([\w-]+)\/slice(?:\?|$)/)))
+        return ok({ job_id: `slice-${m[1]}` });
+      if (path.includes("/jobs/stage-"))
+        return ok({
+          status: "succeeded",
+          result: {
+            name: "benchy",
+            artifact_urls: { stl: "/artifacts/benchy/benchy.stl" },
+            metadata: { bounding_box_mm: { x: 60, y: 31, z: 48 }, fits_build_volume: true },
+          },
+        });
       if (path.includes("/jobs/build-"))
         return ok({
           status: "succeeded",
@@ -102,6 +140,34 @@ function mockFlow(opts: { sliceOk?: boolean } = {}) {
             verification: { printable: true, checks: [] },
           },
         });
+      if (path.includes("/jobs/gen-"))
+        return ok(
+          opts.generateOk === false
+            ? {
+                status: "succeeded",
+                result: {
+                  ok: false,
+                  name: "coaster",
+                  driver: "claude-code",
+                  error: "couldn't produce a printable part in 3 attempts",
+                  attempts: [{ round: 3, ok: true, printable: false, summary: "NOT printable" }],
+                },
+              }
+            : {
+                status: "succeeded",
+                result: {
+                  ok: true,
+                  name: "coaster",
+                  driver: "claude-code",
+                  rounds: 1,
+                  artifact_urls: { stl: "/artifacts/coaster/coaster.stl" },
+                  build: {
+                    metadata: { bounding_box_mm: { x: 90, y: 90, z: 6 }, fits_build_volume: true },
+                    verification: { printable: true, checks: [] },
+                  },
+                },
+              },
+        );
       if (path.includes("/jobs/slice-"))
         return opts.sliceOk === false
           ? ok({ status: "failed", error: "OrcaSlicer executable not found", result: { ok: false, error: "OrcaSlicer executable not found" } })

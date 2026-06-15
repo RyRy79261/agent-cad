@@ -25,8 +25,10 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
+        # Explicit UTF-8: print.json notes contain non-ASCII (×, °) — an
+        # ascii-locale read would raise independently of $PYTHONUTF8.
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
         return None
 
 

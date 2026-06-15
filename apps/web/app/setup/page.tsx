@@ -137,6 +137,13 @@ export default function SetupPage() {
             </tbody>
           </table>
         </div>
+        <Callout kind="info">
+          Bulging or ribbed corners, ghosting, skew, or a cube that’s the wrong size? The{" "}
+          <Link href="/troubleshooting" className="font-semibold text-primary hover:underline">
+            full cube troubleshooting guide
+          </Link>{" "}
+          maps every defect to the exact OrcaSlicer fix.
+        </Callout>
       </Step>
 
       <Step n={7} title="SD card rules (Marlin is picky)">

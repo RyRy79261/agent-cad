@@ -7,13 +7,40 @@
     "filament_id": "GFL99",
     "instantiation": "true",
     "filament_flow_ratio": [
-        "0.98"
+        "0.95"
     ],
     "filament_max_volumetric_speed": [
         "12"
     ],
     "slow_down_layer_time": [
         "8"
+    ],
+    "fan_max_speed": [
+        "100"
+    ],
+    "textured_plate_temp": [
+        "60"
+    ],
+    "textured_plate_temp_initial_layer": [
+        "60"
+    ],
+    "hot_plate_temp": [
+        "60"
+    ],
+    "hot_plate_temp_initial_layer": [
+        "60"
+    ],
+    "cool_plate_temp": [
+        "60"
+    ],
+    "cool_plate_temp_initial_layer": [
+        "60"
+    ],
+    "supertack_plate_temp": [
+        "60"
+    ],
+    "supertack_plate_temp_initial_layer": [
+        "60"
     ],
     "compatible_printers": [
         "Creality CR-10 V2 0.4 nozzle",

@@ -1,0 +1,15 @@
+{
+  "status": "designed",
+  "_status_values": ["designed", "sliced", "printing", "printed-ok", "printed-fail"],
+  "printer": "Creality Ender 5 S1",
+  "slicer": "orca",
+  "machine_profile": "Creality Ender-5 S1 0.4 nozzle",
+  "process_profile": "0.20mm Standard @Creality Ender5S1",
+  "filament": {
+    "material": "PLA",
+    "rationale": "Standard torture-test material; print after the calibration cube reads true."
+  },
+  "settings": { "layer_height_mm": 0.2, "walls": 2, "infill_percent": 15, "infill_pattern": "crosshatch" },
+  "source": "Imported CC0 model — see NOTICE. bbox 60 x 31 x 48 mm, fits the bed.",
+  "notes": "Benchmark only (do not orient/scale). ~100 min at 15% infill, ~4.2 m PLA. Inspect overhangs, bridging, the funnel hole, and hull text."
+}

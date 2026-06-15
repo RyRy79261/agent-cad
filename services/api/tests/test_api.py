@@ -12,7 +12,7 @@ import zipfile
 from pathlib import Path
 
 import trimesh
-from api.main import BUILDS_DIR, app
+from api.main import BUILDS_DIR, _slugify, app
 from fastapi.testclient import TestClient
 
 client = TestClient(app)
@@ -107,9 +107,126 @@ def test_build_unknown_template_is_404() -> None:
     assert client.post("/templates/nope/build").status_code == 404
 
 
+def test_slugify() -> None:
+    assert _slugify("Hello, World!") == "hello-world"
+    assert _slugify("  ") == "part"  # empty -> fallback
+    # Long prompts are clipped to the first few words for a readable dir name.
+    assert _slugify("a really long part description with many words here") == "a-really-long-part-description-with"
+
+
+def test_generate_endpoint_builds_and_serves(monkeypatch: object) -> None:
+    """Endpoint wiring (slug, job, artifact_urls, /artifacts) with the LLM faked.
+
+    The generator itself is unit-tested in the cad service against a FakeDriver;
+    here we only need the API plumbing, so we stub ``generate_part`` to drop a real
+    STL in the expected layout and return a printable result.
+    """
+    import cad.generate as gen
+    from cad.generate import GenerateResult
+
+    def fake_generate(prompt, dest, *, name=None, out_dir=None, **_kw):  # noqa: ANN001, ANN202
+        d = Path(out_dir or dest)
+        d.mkdir(parents=True, exist_ok=True)
+        stl = d / f"{name}.stl"
+        trimesh.creation.box(extents=(10.0, 10.0, 10.0)).export(stl)
+        return GenerateResult(
+            ok=True, driver="fake", description=prompt, dest=str(d), rounds=1,
+            model_path=str(d / "model.py"), source="x = 1",
+            build={"ok": True, "artifacts": {"stl": str(stl)},
+                   "verification": {"printable": True, "summary": "ok"}},
+        )
+
+    monkeypatch.setattr(gen, "generate_part", fake_generate)  # type: ignore[attr-defined]
+
+    ref = client.post("/generate", json={"prompt": "a 10mm cube widget"}).json()
+    assert ref["status"] in ("queued", "running")
+    job = _poll(ref["job_id"])
+    assert job["status"] == "succeeded", job
+    result = job["result"]
+    assert result["name"] == "a-10mm-cube-widget"
+    assert result["ok"] is True
+    stl_url = result["artifact_urls"]["stl"]
+    assert stl_url == "/artifacts/a-10mm-cube-widget/a-10mm-cube-widget.stl"
+    served = client.get(stl_url)
+    assert served.status_code == 200 and len(served.content) > 0
+
+
+def test_generate_rejects_too_short_prompt() -> None:
+    assert client.post("/generate", json={"prompt": "x"}).status_code == 422
+
+
+def test_samples_lists_benchy() -> None:
+    resp = client.get("/samples")
+    assert resp.status_code == 200
+    benchy = next((s for s in resp.json() if s["name"] == "benchy"), None)
+    assert benchy is not None and "description" in benchy and "available" in benchy
+
+
+def test_stage_unknown_sample_is_404() -> None:
+    assert client.post("/samples/nope/stage").status_code == 404
+
+
+def test_sample_available_detects_lfs_pointer(tmp_path: Path) -> None:
+    from api.main import _sample_available
+
+    real = tmp_path / "real.stl"
+    real.write_bytes(b"solid x\nfacet ...\n")
+    pointer = tmp_path / "pointer.stl"
+    pointer.write_text("version https://git-lfs.github.com/spec/v1\noid sha256:abc\nsize 123\n")
+    assert _sample_available(real) is True
+    assert _sample_available(pointer) is False  # unfetched LFS pointer -> not usable
+    assert _sample_available(tmp_path / "missing.stl") is False
+
+
+def test_stage_benchy_serves_stl_when_present() -> None:
+    # The committed 3DBenchy may or may not be present (LFS); handle both.
+    available = next(s for s in client.get("/samples").json() if s["name"] == "benchy")["available"]
+    resp = client.post("/samples/benchy/stage")
+    if not available:
+        assert resp.status_code == 409  # STL missing -> clear error, not a crash
+        return
+    job = _poll(resp.json()["job_id"])
+    assert job["status"] == "succeeded", job
+    result = job["result"]
+    assert result["artifact_urls"]["stl"] == "/artifacts/benchy/benchy.stl"
+    assert result["metadata"]["fits_build_volume"] is True
+    assert client.get(result["artifact_urls"]["stl"]).status_code == 200
+
+
 def test_slice_requires_build_first() -> None:
     shutil.rmtree(BUILDS_DIR / "bracket", ignore_errors=True)  # ensure not built
     assert client.post("/templates/bracket/slice").status_code == 409
+
+
+def test_slice_settings_out_of_range_is_422() -> None:
+    # Body validation happens before the handler, so no build needed.
+    assert client.post("/templates/box/slice", json={"infill_density": 150}).status_code == 422
+    assert client.post("/templates/box/slice", json={"jerk": 999}).status_code == 422
+    assert client.post("/templates/box/slice", json={"layer_height": 5}).status_code == 422
+
+
+def test_slice_empty_body_ok() -> None:
+    # No settings -> committed-profile defaults; 409 because box isn't built here.
+    shutil.rmtree(BUILDS_DIR / "plate", ignore_errors=True)
+    assert client.post("/templates/plate/slice").status_code == 409
+    assert client.post("/templates/plate/slice", json={}).status_code == 409
+
+
+def test_slice_raw_overrides_echoed_and_denylisted() -> None:
+    # The raw-override routing runs before OrcaSlicer (which fails gracefully without
+    # the binary), so the echoed raw map + denylist warnings are asserted CI-safely.
+    build = _poll(client.post("/templates/box/build").json()["job_id"])
+    assert build["status"] == "succeeded", build
+    ref = client.post(
+        "/templates/box/slice",
+        json={"raw": {"layer_change_gcode": "", "wall_loops": "5"}},
+    ).json()
+    job = _poll(ref["job_id"], timeout=180)
+    result = job.get("result") or {}
+    assert result.get("raw_overrides") == {"layer_change_gcode": "", "wall_loops": "5"}
+    # the load-bearing g-code key is refused; the valid one isn't warned about
+    warnings = result.get("override_warnings") or []
+    assert any("layer_change_gcode" in w and "refused" in w for w in warnings)
 
 
 def test_build_then_slice_to_gcode() -> None:

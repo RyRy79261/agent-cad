@@ -32,6 +32,30 @@ cad new box projects/<name>            # scaffold model.py + params.json + print
 Templates live in `services/cad/src/cad/templates/`. If none fits, adapt the
 closest one rather than starting from a blank file.
 
+## Free-text generation (LLM → model.py)
+
+`cad generate "<description>" projects/<name>` turns a natural-language prompt into
+a `model.py` and runs it straight through build→verify→**capped self-correction**
+(same reliability core as templates; the system prompt feeds the gotchas below +
+two templates as few-shot exemplars). The LLM backend is **pluggable** — select
+with `--driver` or `$AGENT_CAD_LLM_DRIVER`:
+
+- **`claude-code`** (default) — shells out to the local `claude` CLI in headless
+  `-p` mode. Runs on the user's existing Claude **subscription**; *no metered API
+  key*. This is the recommended backend.
+- **`anthropic`** — official SDK + `ANTHROPIC_API_KEY` (metered; ~$0.01–0.05/part,
+  templates prompt-cached). Needs `uv sync --extra anthropic` in `services/cad`.
+- **`ollama`** — a local Ollama server (`$OLLAMA_HOST`, offline, zero new deps).
+
+```bash
+cad generate "a 90mm round coaster with a raised rim" projects/coaster
+```
+
+Code lives in `services/cad/src/cad/generate/`; the API exposes it at
+`POST /generate` (+ `POST /generated/{name}/slice`), and the web UI's free-text box
+drives it. Prefer a **template** when one fits (faster, zero-LLM); generate when
+nothing close exists.
+
 Parts live in `projects/<name>/`:
 
 ```
