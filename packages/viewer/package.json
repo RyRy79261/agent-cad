@@ -17,22 +17,22 @@
   },
   "dependencies": {
     "@agent-cad/types": "workspace:*",
-    "@react-three/drei": "^9.114.3",
-    "@react-three/fiber": "^8.17.10",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
     "gcode-preview": "^2.18.0",
     "occt-import-js": "^0.0.23",
-    "three": "^0.169.0"
+    "three": "^0.184.0"
   },
   "peerDependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react": "^19",
+    "react-dom": "^19"
   },
   "devDependencies": {
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
-    "@types/three": "^0.169.0",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.184.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
     "typescript": "^5.7.3"
   }
 }
