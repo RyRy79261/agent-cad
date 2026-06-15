@@ -55,7 +55,7 @@ export type ScanCleanRequest = z.infer<typeof ScanCleanRequest>;
 
 // --- Responses ------------------------------------------------------------- //
 
-export const JobStatus = z.enum(["queued", "running", "succeeded", "failed"]);
+export const JobStatus = z.enum(["queued", "running", "succeeded", "failed", "interrupted"]);
 export type JobStatus = z.infer<typeof JobStatus>;
 
 export const JobRef = z.object({
@@ -74,6 +74,10 @@ export const Job = z.object({
   finished_at: z.number().nullable(),
   result: z.record(z.string(), z.unknown()).nullable(),
   error: z.string().nullable(),
+  /** Coarse progress label for long chat generations. */
+  phase: z.string().nullish(),
+  /** Links a job to its chat so a reloaded chat re-attaches its result. */
+  chat_id: z.string().nullish(),
 });
 export type Job = z.infer<typeof Job>;
 

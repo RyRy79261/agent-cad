@@ -24,7 +24,7 @@ from fastapi.staticfiles import StaticFiles
 
 from api.jobs import JobStore
 from api.projects import get_part, list_parts
-from api.registry import load_settings, save_settings, seed_first_run
+from api.registry import default_printer, load_settings, save_settings, seed_first_run
 from api.schemas import (
     BuildRequest,
     ExtractRequest,
@@ -38,8 +38,8 @@ from api.schemas import (
 )
 from api.store import Store
 
-jobs = JobStore()
 store = Store()
+jobs = JobStore(store=store)  # durable: survives restart, recovers terminal results
 
 # Where API-triggered builds write their artifacts. Served read-only over HTTP at
 # /artifacts so the web viewer can fetch STL/3MF/SVG directly in the browser.
@@ -47,9 +47,25 @@ BUILDS_DIR = Path(os.environ.get("AGENT_CAD_BUILDS_DIR", ".agent-cad-builds")).r
 BUILDS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _sync_active_printer() -> None:
+    """Point the build-volume fit check at the registry's default printer (FOUND-8)."""
+    from cad.printer import BuildVolume, Printer, set_active_printer
+
+    p = default_printer(store)
+    if p is not None:
+        set_active_printer(
+            Printer(
+                name=p.name,
+                build_volume=BuildVolume(p.build_volume.x, p.build_volume.y, p.build_volume.z),
+                bed_margin_mm=p.bed_margin_mm,
+            )
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ANN201, ARG001
     seed_first_run(store)  # create + seed ~/.agent-cad on first run (idempotent)
+    _sync_active_printer()  # fit checks target the registry's default printer
     yield
     jobs.shutdown()
 

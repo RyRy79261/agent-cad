@@ -67,3 +67,24 @@ def test_printer_crud_at_store_level(tmp_path):
     save_printer(s, ender)
     assert get_printer(s, "ender5s1").name == "My Ender"
     assert any(p.id == "ender5s1" for p in list_printers(s))
+
+
+def test_set_active_printer_drives_fits():
+    """FOUND-8: the fit check targets the settable active printer, not the frozen constant."""
+    from cad.printer import (
+        ENDER_5_S1,
+        BuildVolume,
+        Printer,
+        active_printer,
+        fits,
+        set_active_printer,
+    )
+
+    try:
+        # A 150mm cube fits the Ender (usable 210) but not a 100mm machine (usable 90).
+        assert fits((150, 150, 50)).fits is True  # default active = Ender 5 S1
+        set_active_printer(Printer(name="Tiny", build_volume=BuildVolume(100, 100, 100), bed_margin_mm=5))
+        assert active_printer().name == "Tiny"
+        assert fits((150, 150, 50)).fits is False
+    finally:
+        set_active_printer(ENDER_5_S1)  # restore the global for other tests
