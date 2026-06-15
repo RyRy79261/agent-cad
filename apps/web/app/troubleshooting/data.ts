@@ -36,24 +36,31 @@ export const SYMPTOMS: Symptom[] = [
     whatYouSee:
       "Each of the four vertical corners sticks out a little proud of the flat faces — a raised rib or blob right ON the corner. Run a fingernail down a corner and you feel a bump; the flat faces between corners are clean. (A lump ON the corner = bulging. Faint ripples trailing AFTER a corner = ringing, a different problem.)",
     rootCauses: [
-      "No pressure advance is active, so nozzle melt-pressure keeps oozing as the head decelerates into each corner and dumps extra plastic at the vertex — the dominant cause.",
+      "Steady-state OVER-EXTRUSION (the dominant, firmware-free-fixable part): the walls are a touch fat, and the excess piles up most at corners where the head dwells through the direction change. Lowering flow ratio attacks this directly — the owner’s 0.98 → 0.95 was the single biggest improvement.",
+      "Melt-pressure lag (the residual): with no pressure advance, nozzle pressure keeps oozing as the head decelerates into each corner. Slicer settings can only shrink this part, not remove it.",
       "Pressure advance is blocked on stock firmware: the Ender 5 S1 ships without Linear Advance compiled in, so OrcaSlicer’s M900 command is a silent no-op until the firmware is reflashed.",
-      "A faster wall speed builds more melt pressure, making the over-deposit bigger.",
-      "Counter-intuitive trap: lowering acceleration to “fix” it makes bulging WORSE (longer corner dwell). Our acceleration is already low — don’t lower it to chase a bulge.",
+      "Counter-intuitive trap: lowering acceleration/jerk to “smooth” corners makes bulging WORSE (longer corner dwell), and RAISING jerk does nothing — at 25 mm/s walls jerk is non-binding (jerk 25 = wall speed 25). Leave motion settings alone; the lever is flow.",
     ],
     fixes: [
       {
-        action: "Slow the outer + inner wall speed",
+        action: "Lower the flow ratio — the #1 firmware-free lever",
+        where: "OrcaSlicer › Calibration › Flow Rate (filament_flow_ratio)",
+        detail:
+          "The dominant fix: less plastic everywhere → less to pile up at corners. The owner’s 0.98 → 0.95 gave the single biggest improvement. But 0.95 is about the PLA floor — below ~0.92–0.93 you under-extrude (gappy tops, weak walls). Calibrate against measured wall thickness; don’t keep dropping it to chase corners.",
+        impact: "high",
+      },
+      {
+        action: "Slow the outer + inner wall speed (secondary)",
         where: "OrcaSlicer › Speed › Walls (outer_wall_speed / inner_wall_speed)",
         detail:
-          "Lowered 40 → 25 mm/s. Less cruise pressure → a smaller corner over-deposit. The single most reliable fix available without touching firmware. Expect a partial improvement, not perfect corners.",
-        impact: "high",
+          "Lowered 40 → 25 mm/s. Less cruise pressure → a smaller corner over-deposit. Marginal at 25 mm/s (diminishing returns below ~20) — a stopgap, not the main lever. Optional A/B: outer-only 25 → 20.",
+        impact: "low",
       },
       {
         action: "Enable Precise wall",
         where: "OrcaSlicer › Quality › Precision › Precise wall (precise_outer_wall)",
         detail:
-          "Removes the wall overlap that pushes the outer wall slightly proud, so the cube measures truer. Only works with inner→outer wall order, which we keep.",
+          "Removes the wall overlap that pushes the outer wall slightly proud, so the cube measures truer. This is a dimensional-accuracy setting, not a bulge-amplitude fix. Only works with inner→outer wall order, which we keep.",
         impact: "medium",
       },
       {
@@ -64,17 +71,17 @@ export const SYMPTOMS: Symptom[] = [
         impact: "medium",
       },
       {
-        action: "Do NOT lower acceleration/jerk to fight the bulge",
+        action: "Do NOT touch acceleration or jerk to fight the bulge",
         where: "OrcaSlicer › Printer › Motion ability (leave as-is)",
         detail:
-          "Lower acceleration = longer corner dwell = MORE over-deposit. Our values are already conservative. The bulging levers are speed + cooling, not acceleration.",
+          "Lowering accel/jerk = longer corner dwell = MORE over-deposit. Raising jerk does nothing: at 25 mm/s walls it’s non-binding (owner A/B: jerk 20→35 = zero change). The bulge lever is flow, not motion — jerk/accel are the RINGING levers, and there’s no ringing here.",
         impact: "low",
       },
     ],
     primaryTest:
-      "None on stock firmware — lower wall speed is the stopgap. The full cure is OrcaSlicer › Calibration › Pressure Advance, but only after flashing Linear-Advance firmware.",
+      "OrcaSlicer › Calibration › Flow Rate (Pass 1 → Pass 2) — find your true flow, the dominant firmware-free lever. The full cure (pressure advance) only exists after flashing Linear-Advance firmware.",
     severity: "cosmetic",
-    note: "This is our known first-print issue. The committed Ender 5 S1 profile already applies the wall-speed + Precise-wall mitigation, so new slices get it automatically. The remaining bit of bulge is cosmetic and normal on a stock machine.",
+    note: "This is our known first-print issue. The committed Ender 5 S1 profile already applies the flow (0.95) + wall-speed (25) + Precise-wall mitigations, so new slices get them automatically. The remaining bulge is the pressure-lag component that only firmware pressure advance removes — cosmetic and normal on a stock machine.",
   },
   {
     id: "first-layer",
