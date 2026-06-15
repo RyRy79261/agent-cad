@@ -8,6 +8,8 @@ parity with the single source of truth for the machine.
 
 from __future__ import annotations
 
+import re
+
 from api.schemas import BuildVolume, FilamentProfile, Printer, Settings, SliceSettings
 from api.store import Store
 
@@ -94,10 +96,50 @@ def save_printer(store: Store, printer: Printer) -> Printer:
     return printer
 
 
+def set_default_printer(store: Store, printer_id: str) -> None:
+    """Make ``printer_id`` the sole default printer."""
+    for p in list_printers(store):
+        want = p.id == printer_id
+        if p.default != want:
+            p.default = want
+            save_printer(store, p)
+
+
 def delete_printer(store: Store, printer_id: str) -> None:
-    path = store.printer_path(printer_id)
-    if path.exists():
-        path.unlink()
+    """Delete a printer. Refuses the last one; promotes a new default if needed."""
+    printers = list_printers(store)
+    if not any(p.id == printer_id for p in printers):
+        return
+    if len(printers) <= 1:
+        raise ValueError("cannot delete the last printer")
+    was_default = any(p.id == printer_id and p.default for p in printers)
+    store.printer_path(printer_id).unlink(missing_ok=True)
+    if was_default:
+        remaining = [p for p in printers if p.id != printer_id]
+        set_default_printer(store, remaining[0].id)
+
+
+def slugify(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or "printer"
+
+
+def upsert_filament(store: Store, printer_id: str, filament: FilamentProfile) -> Printer | None:
+    """Add or replace (by id) a filament on a printer."""
+    printer = get_printer(store, printer_id)
+    if printer is None:
+        return None
+    printer.filaments = [f for f in printer.filaments if f.id != filament.id]
+    printer.filaments.append(filament)
+    return save_printer(store, printer)
+
+
+def remove_filament(store: Store, printer_id: str, filament_id: str) -> Printer | None:
+    """Remove a filament from a printer."""
+    printer = get_printer(store, printer_id)
+    if printer is None:
+        return None
+    printer.filaments = [f for f in printer.filaments if f.id != filament_id]
+    return save_printer(store, printer)
 
 
 def default_printer(store: Store) -> Printer | None:

@@ -25,13 +25,28 @@ from fastapi.staticfiles import StaticFiles
 from api.jobs import JobStore
 from api.projects import get_part, list_parts
 from api.descriptor import build_descriptor
-from api.registry import default_printer, get_printer, load_settings, save_settings, seed_first_run
+from api.registry import (
+    default_printer,
+    delete_printer,
+    get_printer,
+    list_printers,
+    load_settings,
+    remove_filament,
+    save_printer,
+    save_settings,
+    seed_first_run,
+    set_default_printer,
+    slugify,
+    upsert_filament,
+)
 from api.schemas import (
     BuildRequest,
     ExtractRequest,
+    FilamentProfile,
     GenerateRequest,
     JobRef,
     OrcaSliceRequest,
+    Printer,
     PrusaSliceRequest,
     ScanCleanRequest,
     Settings,
@@ -130,6 +145,85 @@ def get_settings_descriptor(printer_id: str, filament: str | None = None) -> Set
         if fil is None:
             raise HTTPException(status_code=404, detail=f"Unknown filament: {filament}")
     return build_descriptor(printer, fil)
+
+
+# --------------------------------------------------------------------------- #
+# Printer + filament registry (the net-new multi-printer registry)            #
+# --------------------------------------------------------------------------- #
+@app.get("/printers", response_model=list[Printer], tags=["printers"])
+def list_printers_ep() -> list[Printer]:
+    return list_printers(store)
+
+
+@app.post("/printers", response_model=Printer, tags=["printers"])
+def create_printer_ep(printer: Printer) -> Printer:
+    """Create a printer (id slugified from name when blank)."""
+    if not printer.id:
+        printer.id = slugify(printer.name)
+    save_printer(store, printer)
+    if printer.default:
+        set_default_printer(store, printer.id)
+    _sync_active_printer()
+    result = get_printer(store, printer.id)
+    assert result is not None
+    return result
+
+
+@app.get("/printers/{printer_id}", response_model=Printer, tags=["printers"])
+def get_printer_ep(printer_id: str) -> Printer:
+    printer = get_printer(store, printer_id)
+    if printer is None:
+        raise HTTPException(status_code=404, detail=f"Unknown printer: {printer_id}")
+    return printer
+
+
+@app.put("/printers/{printer_id}", response_model=Printer, tags=["printers"])
+def update_printer_ep(printer_id: str, printer: Printer) -> Printer:
+    if get_printer(store, printer_id) is None:
+        raise HTTPException(status_code=404, detail=f"Unknown printer: {printer_id}")
+    printer.id = printer_id  # the path is authoritative
+    save_printer(store, printer)
+    if printer.default:
+        set_default_printer(store, printer_id)
+    _sync_active_printer()
+    result = get_printer(store, printer_id)
+    assert result is not None
+    return result
+
+
+@app.delete("/printers/{printer_id}", tags=["printers"])
+def delete_printer_ep(printer_id: str) -> dict[str, bool]:
+    try:
+        delete_printer(store, printer_id)
+    except ValueError as exc:  # last printer
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _sync_active_printer()
+    return {"ok": True}
+
+
+@app.post("/printers/{printer_id}/filaments", response_model=Printer, tags=["printers"])
+def add_filament_ep(printer_id: str, filament: FilamentProfile) -> Printer:
+    printer = upsert_filament(store, printer_id, filament)
+    if printer is None:
+        raise HTTPException(status_code=404, detail=f"Unknown printer: {printer_id}")
+    return printer
+
+
+@app.put("/printers/{printer_id}/filaments/{filament_id}", response_model=Printer, tags=["printers"])
+def update_filament_ep(printer_id: str, filament_id: str, filament: FilamentProfile) -> Printer:
+    filament.id = filament_id  # the path is authoritative
+    printer = upsert_filament(store, printer_id, filament)
+    if printer is None:
+        raise HTTPException(status_code=404, detail=f"Unknown printer: {printer_id}")
+    return printer
+
+
+@app.delete("/printers/{printer_id}/filaments/{filament_id}", response_model=Printer, tags=["printers"])
+def delete_filament_ep(printer_id: str, filament_id: str) -> Printer:
+    printer = remove_filament(store, printer_id, filament_id)
+    if printer is None:
+        raise HTTPException(status_code=404, detail=f"Unknown printer: {printer_id}")
+    return printer
 
 
 # --------------------------------------------------------------------------- #
