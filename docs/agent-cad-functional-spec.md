@@ -77,10 +77,11 @@ These are the cross-cutting decisions the review flagged; they are settled here 
    / `ENDER_5_S1` carry only `{name, build_volume, bed_margin_mm}`. The "0.4 mm nozzle" / "firmware"
    shown in the header and Printer Detail are **new registry fields**, not derived from today's model.
    Firmware is editable display metadata, not load-bearing for slicing.
-4. **`effort` is NET-NEW driver plumbing (or dropped).** The driver layer accepts only a model id today.
-   `settings.effort` does not feed anything yet. Either (a) wire it as a claude-code option and define
-   what it maps to, or (b) drop it. The chat model-selector (`driver`+`model`) and `settings`
-   (`active_model`+`effort`) must describe the **same** thing — pick one.
+4. **LLM = Anthropic SDK only, at MAX effort (LOCKED 2026-06-15).** v1 drops `claude-code`/`ollama` and
+   uses the official Anthropic SDK (`ANTHROPIC_API_KEY` + `uv sync --extra anthropic`). `effort` is **not**
+   a user knob — every generate/interview call runs at **max** effort (`output_config.effort: "max"`). A
+   model-selector chip, if kept, selects among **Anthropic models** (default Opus 4.8); `settings` carries
+   `active_model` only (no `effort`). The interview is capped at **6 rounds**, always skippable.
 5. **Per-chat artifacts re-plumb STL lookup (not just a URL rewrite).** Today `_submit_slice` and generate
    hardcode `BUILDS_DIR/<name>/<name>.stl`. Moving to `chats/<id>/artifacts/` means: the slice core resolves
    the STL by **path from the chat's artifact dir** (not a global slug); `/artifacts` serves per-chat

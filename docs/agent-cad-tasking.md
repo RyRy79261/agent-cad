@@ -4,15 +4,15 @@
 
 ## Decisions to lock before starting
 
-These §3/§10 open questions gate sequencing; recommendations in **bold**:
+**LOCKED 2026-06-15** (the owner's calls):
 
-- **effort** — *drop for v1*; keep only per-chat `driver`+`model`. (Unblocks FOUND-3, SCR-005, API-7.)
-- **Literal promotion** of `infill_pattern`/`seam_position` — *yes* (FOUND-5). Cheap; closes a validation hole + makes select options derived. Zero-dep critical-path root.
-- **Refine versioning** — *`artifacts/v<N>/`, keep every*. (API-8 layout; needed before SCR-008, M3.)
-- **Interview shape** — *job-based, capped at 3 rounds, always skippable*; uses a thin prompt+parse over the existing driver (no new driver method). (API-9, M3.)
-- **anthropic driver key** — *hide non-`claude-code` drivers for v1* (show disabled); `claude-code` works on the subscription with no key. (SCR-005.)
-- **Multi-printer** — *registry-only scaffolding*; Ender 5 S1 is the only sliceable printer. Do NOT build per-printer range overlays. (FOUND-13, SCR-017/018.)
-- **/setup + /troubleshooting** — */setup survives* as the one-time hardware manual (verify it renders after the dark retheme, UIP-2); *fold troubleshooting into chat* (AI is the expert).
+- **LLM driver → Anthropic SDK only** for v1 (drop `claude-code` + `ollama`). Needs `ANTHROPIC_API_KEY` + `uv sync --extra anthropic`. (FOUND-3, API-7/9, SCR-005.)
+- **effort → not a user knob; every generate/interview runs at MAX effort** (`output_config.effort: "max"` via the Anthropic SDK). Drop the `effort` control; hardcode max. (FOUND-3, API-7.)
+- **Interview → job-based, capped at 6 rounds, always skippable** (thin prompt+parse over the driver; no new driver method). (API-9, M3.)
+- **One printer (Ender 5 S1)** = the only *sliceable* printer, BUT the Equipment / Printer Detail / Filament settings screens are **still built and visible**. Registry-only scaffolding; no per-printer range overlays. (FOUND-13, SCR-016..021.)
+- **Literal promotion** of `infill_pattern`/`seam_position` — **done** (FOUND-5 ✓). Closes the validation hole + makes select options derived.
+- **Refine versioning** — `artifacts/v<N>/`, keep every. (API-8, M3.)
+- **`/setup` survives** as the hardware manual (verify it renders post-retheme, UIP-2); **troubleshooting folds into chat** (AI is the expert).
 
 ## Milestone roadmap (build order)
 

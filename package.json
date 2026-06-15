@@ -16,9 +16,10 @@
     "test": "turbo run test",
     "clean": "turbo run clean && rm -rf node_modules/.cache .turbo",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "start": "node scripts/start.mjs",
     "py:sync": "uv sync --all-packages",
     "py:test": "PYTHONUTF8=1 uv run pytest",
-    "py:api": "uv run --package apiserver uvicorn api.main:app --reload --port 8000"
+    "py:api": "uv run --package apiserver uvicorn api.main:app --reload --port 8420"
   },
   "devDependencies": {
     "prettier": "^3.4.2",

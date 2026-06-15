@@ -7,7 +7,7 @@ TS SDK in ``packages/types`` is generated from.
 
 Run locally::
 
-    uv run --package apiserver uvicorn api.main:app --reload --port 8000
+    uv run --package apiserver uvicorn api.main:app --reload --port 8420
     # or: agent-cad-api
 """
 
@@ -56,10 +56,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# The Next.js control panel runs on a different port in dev.
+# The Next.js control panel runs on a different port in dev. Origins are
+# env-configurable (AGENT_CAD_CORS_ORIGINS, comma-separated) so the web can run on a
+# non-default port (e.g. when :3420 is taken) without a code change; defaults cover :3420.
+_cors_origins = [o.strip() for o in os.environ.get("AGENT_CAD_CORS_ORIGINS", "").split(",") if o.strip()] or [
+    "http://localhost:3420",
+    "http://127.0.0.1:3420",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -452,7 +458,7 @@ def run() -> None:
     """Console-script entry point (`agent-cad-api`)."""
     import uvicorn
 
-    uvicorn.run("api.main:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("api.main:app", host="127.0.0.1", port=8420, reload=False)
 
 
 __all__ = ["app", "run"]

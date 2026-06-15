@@ -142,7 +142,7 @@ export const PartSummary = z.object({
 export type PartSummary = z.infer<typeof PartSummary>;
 
 /** Default local API base URL (the FastAPI server in `services/api`). */
-export const DEFAULT_API_URL = "http://127.0.0.1:8000";
+export const DEFAULT_API_URL = "http://127.0.0.1:8420";
 
 // --- Target printer -------------------------------------------------------- //
 

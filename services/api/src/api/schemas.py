@@ -6,7 +6,7 @@ generated OpenAPI spec — keep field names in sync with the frontend.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -37,8 +37,8 @@ class SliceSettings(BaseModel):
     wall_loops: int | None = Field(default=None, ge=1, le=10)
     top_layers: int | None = Field(default=None, ge=0, le=20)
     bottom_layers: int | None = Field(default=None, ge=0, le=20)
-    infill_pattern: str | None = None
-    seam_position: str | None = None
+    infill_pattern: Literal["crosshatch", "gyroid", "grid", "cubic"] | None = None
+    seam_position: Literal["aligned", "nearest", "back", "random"] | None = None
     brim_width: float | None = Field(default=None, ge=0, le=20)
     support: bool | None = None
     support_threshold: int | None = Field(default=None, ge=0, le=90)
