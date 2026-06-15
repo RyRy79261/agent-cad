@@ -20,7 +20,17 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+
+from api.chats import (
+    append_message,
+    create_chat,
+    delete_chat,
+    get_chat,
+    list_chats,
+    save_chat,
+)
 
 from api.jobs import JobStore
 from api.projects import get_part, list_parts
@@ -40,7 +50,13 @@ from api.registry import (
     upsert_filament,
 )
 from api.schemas import (
+    ArtifactRef,
     BuildRequest,
+    Chat,
+    ChatCreate,
+    ChatGenerateIn,
+    ChatMessageIn,
+    ChatSliceIn,
     ExtractRequest,
     FilamentProfile,
     GenerateRequest,
@@ -288,27 +304,34 @@ def build_template(name: str) -> JobRef:
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
 
 
-def _submit_slice(name: str, settings: SliceSettings | None = None) -> JobRef:
-    """Slice ``<builds>/<name>/<name>.stl`` for the Ender 5 S1 and serve the g-code.
+def _slice_stl(
+    stl: Path,
+    out_dir: Path,
+    url_prefix: str,
+    settings: SliceSettings | None = None,
+    *,
+    chat_id: str | None = None,
+) -> JobRef:
+    """Slice an STL for the Ender 5 S1 into ``out_dir``, serving the g-code under ``url_prefix``.
 
-    Shared by template / generated / sample slicing — all write the same layout. The
-    ``settings`` body overrides the committed profile for this slice: typed fields via
-    :func:`slice_overrides`, plus arbitrary ``raw`` key→value pairs via
-    :func:`route_raw_overrides` (raw wins on conflict). The job result echoes the applied
-    settings + any override warnings and adds ``gcode_url`` (under ``/artifacts``); it
-    fails gracefully (``ok: false``) without OrcaSlicer.
+    The shared slice core (template / generated / sample / chat all use it). ``settings``
+    overrides the committed profile: typed fields via :func:`slice_overrides`, plus arbitrary
+    ``raw`` pairs via :func:`route_raw_overrides` (raw wins). The result echoes the applied
+    settings + warnings, adds ``gcode_url`` (``{url_prefix}/<file>``), and fills
+    ``layer_count`` from the extracted g-code when slice_info lacked it (API-5). When
+    ``chat_id`` is set, the chat is updated on completion (status + an assistant turn with the
+    g-code ref). Fails gracefully (``ok: false``) without OrcaSlicer.
     """
+    if not stl.exists():
+        raise HTTPException(status_code=409, detail=f"no STL to slice at {stl}")
     settings = settings or SliceSettings()
     typed = settings.model_dump(exclude={"raw"}, exclude_none=True)
     raw = settings.raw or {}
-    part_dir = BUILDS_DIR / name
-    stl = part_dir / f"{name}.stl"
-    if not stl.exists():
-        raise HTTPException(status_code=409, detail=f"build {name!r} first — no STL at {stl}")
-    archive = part_dir / f"{name}.gcode.3mf"
+    archive = out_dir / f"{stl.stem}.gcode.3mf"
 
     def work() -> dict:
         from slicer import orca
+        from slicer.extract import count_gcode_layers
         from slicer.profiles import (
             ender5s1_profiles,
             merge_overrides,
@@ -323,7 +346,7 @@ def _submit_slice(name: str, settings: SliceSettings | None = None) -> JobRef:
         merged = merge_overrides(slice_overrides(**typed), raw_overrides)  # raw wins
         for kind, override in merged.items():
             paths[kind] = profile_with_overrides(
-                override, part_dir / f"_{kind}_override.json", base=profiles[kind]
+                override, out_dir / f"_{kind}_override.json", base=profiles[kind]
             )
         result = orca.slice_model(
             stl,
@@ -338,11 +361,27 @@ def _submit_slice(name: str, settings: SliceSettings | None = None) -> JobRef:
         result["override_warnings"] = warnings
         gpath = result.get("gcode_path")
         if result.get("ok") and gpath:
-            result["gcode_url"] = f"/artifacts/{name}/{Path(gpath).name}"
+            result["gcode_url"] = f"{url_prefix}/{Path(gpath).name}"
+            layers = count_gcode_layers(gpath)
+            if layers is not None:
+                for plate in (result.get("info") or {}).get("plates", []):
+                    if plate.get("layer_count") is None:
+                        plate["layer_count"] = layers
+        if chat_id is not None:
+            _update_chat_after_slice(chat_id, result, gpath)
         return result
 
-    job = jobs.submit("slice.ender5s1", work)
+    job = jobs.submit("slice.ender5s1", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+def _submit_slice(name: str, settings: SliceSettings | None = None) -> JobRef:
+    """Slice ``<builds>/<name>/<name>.stl`` (template / generated / sample path)."""
+    part_dir = BUILDS_DIR / name
+    stl = part_dir / f"{name}.stl"
+    if not stl.exists():
+        raise HTTPException(status_code=409, detail=f"build {name!r} first — no STL at {stl}")
+    return _slice_stl(stl, part_dir, f"/artifacts/{name}", settings)
 
 
 @app.post("/templates/{name}/slice", response_model=JobRef, tags=["slice"])
@@ -406,6 +445,212 @@ def generate(req: GenerateRequest) -> JobRef:
 def slice_generated(name: str, settings: SliceSettings | None = None) -> JobRef:
     """Slice a generated part's STL for the Ender 5 S1 (generate it first)."""
     return _submit_slice(name, settings)
+
+
+# --------------------------------------------------------------------------- #
+# Chats (the local-first chat workspace; artifacts namespaced per chat)       #
+# --------------------------------------------------------------------------- #
+def _narrate_build(payload: dict) -> str:
+    """A short, templated (no-LLM) summary of a build result for the chat thread."""
+    if not payload.get("ok"):
+        return "I couldn't produce a printable model — " + (
+            payload.get("error") or "have a look at the attempts."
+        )
+    build = payload.get("build") or {}
+    meta = build.get("metadata") or {}
+    bbox = meta.get("bounding_box_mm")
+    verif = build.get("verification") or {}
+    bits = ["Here's your model."]
+    if bbox:
+        bits.append(f"It's {bbox['x']:.0f}×{bbox['y']:.0f}×{bbox['z']:.0f} mm.")
+    if meta.get("fits_build_volume") is True:
+        bits.append("Fits the bed.")
+    elif meta.get("fits_build_volume") is False:
+        bits.append("⚠ Doesn't fit the bed as-is.")
+    if verif.get("printable") is True:
+        bits.append("Printability checks passed.")
+    return " ".join(bits)
+
+
+def _narrate_slice(result: dict) -> str:
+    if not result.get("ok"):
+        err = (result.get("error") or "").lower()
+        if not err or "orca" in err or "not found" in err:
+            return "Slicing failed — is OrcaSlicer installed? See the Printer setup page."
+        return f"Slicing failed: {result.get('error')}"
+    plate = ((result.get("info") or {}).get("plates") or [{}])[0]
+    bits = ["Sliced and ready to print."]
+    if t := plate.get("print_time_s"):
+        bits.append(f"~{int(t // 3600)}h {int((t % 3600) // 60)}m,")
+    if plate.get("length_m"):
+        bits.append(f"{plate['length_m']:.1f} m /")
+    if plate.get("weight_g"):
+        bits.append(f"{plate['weight_g']:.1f} g filament,")
+    if plate.get("layer_count"):
+        bits.append(f"{plate['layer_count']} layers.")
+    return " ".join(bits)
+
+
+def _update_chat_after_slice(chat_id: str, result: dict, gpath: object) -> None:
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        return
+    refs: list[ArtifactRef] = []
+    if result.get("ok") and gpath:
+        gname = Path(str(gpath)).name
+        chat.status = "ready-to-print"
+        refs = [
+            ArtifactRef(
+                kind="gcode",
+                name=gname,
+                fmt="gcode",
+                url=f"/chats/{chat_id}/artifacts/{gname}",
+                slice_info=result.get("info"),
+            )
+        ]
+    else:
+        chat.status = "model-ready"
+    save_chat(store, chat)
+    append_message(store, chat_id, "assistant", _narrate_slice(result), artifact_refs=refs)
+
+
+def _resolve_filament_settings(chat: Chat, body: ChatSliceIn | None) -> SliceSettings:
+    """The SliceSettings to slice with: explicit override > the chat's filament > default."""
+    if body is not None and body.settings is not None:
+        return body.settings
+    fil_id = (body.filament_id if body else None) or chat.filament_id
+    printer = get_printer(store, chat.printer_id) if chat.printer_id else default_printer(store)
+    if printer is not None:
+        fil = None
+        if fil_id:
+            fil = next((f for f in printer.filaments if f.id == fil_id), None)
+        if fil is None and printer.filaments:
+            fil = printer.filaments[0]
+        if fil is not None:
+            return fil.settings
+    return SliceSettings()
+
+
+@app.get("/chats", response_model=list[Chat], tags=["chats"])
+def list_chats_ep() -> list[Chat]:
+    return list_chats(store)
+
+
+@app.post("/chats", response_model=Chat, tags=["chats"])
+def create_chat_ep(body: ChatCreate) -> Chat:
+    title = body.title or (body.prompt[:48] if body.prompt else None)
+    chat = create_chat(store, title)
+    if body.prompt:
+        chat = append_message(store, chat.id, "user", body.prompt) or chat
+    return chat
+
+
+@app.get("/chats/{chat_id}", response_model=Chat, tags=["chats"])
+def get_chat_ep(chat_id: str) -> Chat:
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    return chat
+
+
+@app.delete("/chats/{chat_id}", tags=["chats"])
+def delete_chat_ep(chat_id: str) -> dict[str, bool]:
+    delete_chat(store, chat_id)
+    return {"ok": True}
+
+
+@app.post("/chats/{chat_id}/messages", response_model=Chat, tags=["chats"])
+def append_message_ep(chat_id: str, body: ChatMessageIn) -> Chat:
+    chat = append_message(store, chat_id, body.role, body.content)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    return chat
+
+
+@app.get("/chats/{chat_id}/artifacts/{filename}", tags=["chats"])
+def get_chat_artifact(chat_id: str, filename: str) -> FileResponse:
+    """Serve a chat's artifact (STL / g-code / …) read-only, guarding path traversal."""
+    art_dir = store.artifacts_dir(chat_id).resolve()
+    path = (art_dir / filename).resolve()
+    if art_dir not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="artifact not found")
+    return FileResponse(str(path))
+
+
+@app.post("/chats/{chat_id}/generate", response_model=JobRef, tags=["chats"])
+def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
+    """Generate a model into the chat's namespace (Anthropic driver, max effort)."""
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    append_message(store, chat_id, "user", body.prompt)
+    chat = get_chat(store, chat_id)
+    assert chat is not None
+    chat.status = "generating"
+    save_chat(store, chat)
+    art_dir = store.artifacts_dir(chat_id)
+    prompt = body.prompt
+
+    def work() -> dict:
+        from cad.generate import generate_part
+
+        # Anthropic driver per the locked v1 decision; effort=max is a driver concern.
+        result = generate_part(
+            prompt,
+            art_dir,
+            driver="anthropic",
+            max_rounds=2,
+            verify=True,
+            name="model",
+            out_dir=str(art_dir),
+        )
+        payload = result.to_dict()
+        build = result.build or {}
+        artifacts = (build.get("artifacts") or {}) if build else {}
+        refs: list[ArtifactRef] = []
+        stl_name: str | None = None
+        for fmt, path in artifacts.items():
+            fname = Path(path).name
+            refs.append(
+                ArtifactRef(
+                    kind="generated",
+                    name=fname,
+                    fmt=fmt,
+                    url=f"/chats/{chat_id}/artifacts/{fname}",
+                )
+            )
+            if fmt == "stl":
+                stl_name = fname
+        payload["artifact_urls"] = {
+            fmt: f"/chats/{chat_id}/artifacts/{Path(p).name}" for fmt, p in artifacts.items()
+        }
+        c = get_chat(store, chat_id)
+        if c is not None:
+            if stl_name:
+                c.current_stl = stl_name
+            c.status = "model-ready" if payload.get("ok") else "new"
+            save_chat(store, c)
+            append_message(store, chat_id, "assistant", _narrate_build(payload), artifact_refs=refs)
+        return payload
+
+    job = jobs.submit("cad.generate", work, chat_id=chat_id)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+@app.post("/chats/{chat_id}/slice", response_model=JobRef, tags=["chats"])
+def chat_slice(chat_id: str, body: ChatSliceIn | None = None) -> JobRef:
+    """Slice the chat's current model with a filament's settings, into the chat namespace."""
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    if not chat.current_stl:
+        raise HTTPException(status_code=409, detail="no model to slice — generate or import one first")
+    art_dir = store.artifacts_dir(chat_id)
+    stl = art_dir / chat.current_stl
+    settings = _resolve_filament_settings(chat, body)
+    chat.status = "slicing"
+    save_chat(store, chat)
+    return _slice_stl(stl, art_dir, f"/chats/{chat_id}/artifacts", settings, chat_id=chat_id)
 
 
 # --------------------------------------------------------------------------- #

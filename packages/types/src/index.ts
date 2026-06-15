@@ -211,6 +211,79 @@ export const Settings = z.object({
 });
 export type Settings = z.infer<typeof Settings>;
 
+// --- Schema-driven settings descriptor (§3a) ------------------------------- //
+
+export const SettingsField = z.object({
+  key: z.string(),
+  label: z.string(),
+  help: z.string().nullish(),
+  input_type: z.enum(["slider", "number", "percent", "select", "toggle", "text"]),
+  scope: z.enum(["process", "machine", "filament", "raw"]),
+  binding: z.enum(["per-slice", "per-filament", "per-printer"]),
+  group: z.string(),
+  unit: z.string().nullish(),
+  default: z.unknown().nullish(),
+  min: z.number().nullish(),
+  max: z.number().nullish(),
+  step: z.number().nullish(),
+  options: z.array(z.string()).nullish(),
+  advanced: z.boolean().default(false),
+  depends_on: z.object({ field: z.string(), equals: z.unknown() }).nullish(),
+});
+export type SettingsField = z.infer<typeof SettingsField>;
+
+export const SettingsGroup = z.object({
+  id: z.string(),
+  label: z.string(),
+  default_expanded: z.boolean().default(true),
+});
+export type SettingsGroup = z.infer<typeof SettingsGroup>;
+
+export const SettingsDescriptor = z.object({
+  printer_id: z.string(),
+  printer_name: z.string(),
+  filament_id: z.string().nullish(),
+  schema_version: z.number().int().default(1),
+  groups: z.array(SettingsGroup),
+  fields: z.array(SettingsField),
+});
+export type SettingsDescriptor = z.infer<typeof SettingsDescriptor>;
+
+// --- Chats (the local-first chat workspace) -------------------------------- //
+
+export const ArtifactRef = z.object({
+  kind: z.string(),
+  name: z.string(),
+  url: z.string(),
+  fmt: z.string().nullish(),
+  bbox: z.record(z.string(), z.number()).nullish(),
+  fits_build_volume: z.boolean().nullish(),
+  slice_info: z.record(z.string(), z.unknown()).nullish(),
+});
+export type ArtifactRef = z.infer<typeof ArtifactRef>;
+
+export const Message = z.object({
+  role: z.string(),
+  content: z.string(),
+  ts: z.number().default(0),
+  quick_replies: z.array(z.string()).nullish(),
+  artifact_refs: z.array(ArtifactRef).default([]),
+});
+export type Message = z.infer<typeof Message>;
+
+export const Chat = z.object({
+  id: z.string(),
+  title: z.string(),
+  created_at: z.number(),
+  updated_at: z.number(),
+  status: z.string().default("new"),
+  printer_id: z.string().nullish(),
+  filament_id: z.string().nullish(),
+  current_stl: z.string().nullish(),
+  messages: z.array(Message).default([]),
+});
+export type Chat = z.infer<typeof Chat>;
+
 /** Default local API base URL (the FastAPI server in `services/api`). */
 export const DEFAULT_API_URL = "http://127.0.0.1:8420";
 

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   BuildRequest,
   BuildResult,
+  Chat,
   ENDER_5_S1,
   Printer,
+  SettingsDescriptor,
   Settings,
   SliceSettings,
   Verification,
@@ -107,5 +109,31 @@ describe("SliceSettings + registry (mirror schemas.py)", () => {
     });
     expect(p.kind).toBe("FDM");
     expect(p.filaments[0]?.material).toBe("PLA");
+  });
+});
+
+describe("Chat + SettingsDescriptor (mirror schemas.py)", () => {
+  it("parses a chat thread with an artifact ref", () => {
+    const chat = Chat.parse({
+      id: "abc", title: "Coaster", created_at: 1, updated_at: 2, status: "model-ready",
+      current_stl: "model.stl",
+      messages: [
+        { role: "user", content: "a coaster", ts: 1 },
+        { role: "assistant", content: "here you go", ts: 2,
+          artifact_refs: [{ kind: "generated", name: "model.stl", url: "/chats/abc/artifacts/model.stl", fmt: "stl" }] },
+      ],
+    });
+    expect(chat.messages[1]?.artifact_refs[0]?.kind).toBe("generated");
+  });
+
+  it("parses a settings descriptor", () => {
+    const d = SettingsDescriptor.parse({
+      printer_id: "ender5s1", printer_name: "Creality Ender 5 S1",
+      groups: [{ id: "quality", label: "Quality" }],
+      fields: [{ key: "wall_speed", label: "Print speed", input_type: "slider",
+        scope: "process", binding: "per-slice", group: "quality", min: 5, max: 120 }],
+    });
+    expect(d.fields[0]?.key).toBe("wall_speed");
+    expect(d.groups[0]?.default_expanded).toBe(true);
   });
 });

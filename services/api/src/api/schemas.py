@@ -149,6 +149,57 @@ class SettingsDescriptor(BaseModel):
     fields: list[SettingsField]
 
 
+class ArtifactRef(BaseModel):
+    """An artifact attached to a chat turn (lives in chats/<id>/artifacts/)."""
+
+    kind: str  # generated | template | sample | import | gcode
+    name: str  # filename in the chat's artifacts dir
+    url: str   # /chats/<id>/artifacts/<name>
+    fmt: str | None = None  # stl | gcode | step | 3mf | svg
+    bbox: dict[str, float] | None = None
+    fits_build_volume: bool | None = None
+    slice_info: dict[str, Any] | None = None
+
+
+class Message(BaseModel):
+    role: str  # user | assistant | system
+    content: str
+    ts: float = 0.0
+    quick_replies: list[str] | None = None
+    artifact_refs: list[ArtifactRef] = Field(default_factory=list)
+
+
+class Chat(BaseModel):
+    id: str
+    title: str
+    created_at: float
+    updated_at: float
+    status: str = "new"  # new | generating | model-ready | slicing | ready-to-print
+    printer_id: str | None = None
+    filament_id: str | None = None
+    current_stl: str | None = None  # filename of the slice target in artifacts/
+    messages: list[Message] = Field(default_factory=list)
+
+
+class ChatCreate(BaseModel):
+    title: str | None = None
+    prompt: str | None = None  # optional first user message
+
+
+class ChatMessageIn(BaseModel):
+    role: str = "user"
+    content: str = Field(..., min_length=1)
+
+
+class ChatGenerateIn(BaseModel):
+    prompt: str = Field(..., min_length=3)
+
+
+class ChatSliceIn(BaseModel):
+    filament_id: str | None = None
+    settings: SliceSettings | None = None
+
+
 class GenerateRequest(BaseModel):
     """Free-text → generated build123d part."""
 
