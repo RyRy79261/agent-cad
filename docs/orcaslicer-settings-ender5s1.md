@@ -171,7 +171,7 @@ default, so the **caps below are the de-facto print-accel ceiling**.
 | `default_acceleration` | 0 | Slicer baseline accel (0 = trust firmware/caps) | 0, or 500–1000 to take slicer control | **✔** | high |
 | `outer_wall_acceleration` | 500 | Perimeter accel — only non-zero accel emitted; dominates finish | 300–1000; 500 safe on no-input-shaping S1 | | high |
 | `machine_max_acceleration_x` / `_y` | 500,500 | Per-axis accel caps (`M201 X/Y`) — raise together to unlock speed | 500 safe; 1000–2500 achievable | **✔** | med |
-| `machine_max_jerk_x` / `_y` | 25,25 | Classic-jerk cornering cap (`M205 X/Y`) | *raised* to 25 to fight corner bulging (shorter corner dwell); do **not** lower it for bulging — that worsens it (lowering jerk is the *ringing* lever) | **✔** | med |
+| `machine_max_jerk_x` / `_y` | 25,25 | Classic-jerk cornering cap (`M205 X/Y`) | **Guardrail, not a bulge lever.** Non-binding at 25 mm/s walls (jerk 25 = wall speed 25 → corner taken at full speed), so *raising* it does nothing for bulge (owner A/B: 20→35 = zero change). Do **not** *lower* it — that lengthens corner dwell and worsens bulge. It's the *ringing* lever, and there's no ringing here. | **✔** | low |
 | `inner_wall_acceleration` | 0 | Hidden-wall accel (0 → default) | 0 or 1000–2000 for speed | **✔** | med |
 | `initial_layer_acceleration` | 0 | First-layer accel (0 → firmware) | 0 or 300–500 | **✔** | med |
 | `top_surface_acceleration` | 0 | Top-face accel (0 → default; match outer_wall for uniform finish) | 0 or 500 | **✔** | med |
