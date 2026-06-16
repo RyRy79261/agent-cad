@@ -11,4 +11,5 @@ from __future__ import annotations
 import os
 import tempfile
 
-os.environ.setdefault("AGENT_CAD_HOME", tempfile.mkdtemp(prefix="agentcad-test-"))
+# Force isolation: always a throwaway dir, even if AGENT_CAD_HOME is already set in the env.
+os.environ["AGENT_CAD_HOME"] = tempfile.mkdtemp(prefix="agentcad-test-")

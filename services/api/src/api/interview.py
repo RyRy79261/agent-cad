@@ -38,6 +38,8 @@ def _parse_interview(reply: str) -> dict:
         data = json.loads(m.group(0))
     except (ValueError, TypeError):
         return {"status": "ready"}
+    if not isinstance(data, dict):  # json may be a list/number/string
+        return {"status": "ready"}
     if data.get("status") == "question" and isinstance(data.get("question"), str):
         sugg = data.get("suggestions")
         sugg = [str(s) for s in sugg][:4] if isinstance(sugg, list) else []

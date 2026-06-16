@@ -34,8 +34,10 @@ def test_interview_parse_question_and_ready():
     assert _parse_interview("not json at all")["status"] == "ready"  # graceful fallback
 
 
-def test_interview_turn_degrades_to_ready_without_key():
-    # No ANTHROPIC_API_KEY in tests -> driver unavailable -> must not block intake.
+def test_interview_turn_degrades_to_ready_without_key(monkeypatch):
+    # Force no credentials so the driver is unavailable regardless of the dev's env.
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_AUTH_TOKEN", raising=False)
     out = interview_turn("a phone stand", driver="anthropic")
     assert out["status"] == "ready"
 
@@ -80,10 +82,16 @@ def test_api_completion_http():
         assert c.post(f"/chats/{gen}/refine", json={"instruction": "wider"}).status_code == 200
 
         # --- calibrate: cube target builds + slices in one job (slice needs OrcaSlicer) ---
+        import shutil as _sh
+
+        cal_dir = Path(".agent-cad-builds/calibration-ender5s1-default-cube")
+        _sh.rmtree(cal_dir, ignore_errors=True)  # avoid false positives from prior runs
         cal = c.post("/calibrate", json={"target": "cube"})
         assert cal.status_code == 200 and cal.json()["kind"] == "calibrate"
-        # the cube build half runs even without OrcaSlicer -> the cube STL gets created
+        # the cube build half runs even without OrcaSlicer -> THIS run's cube STL is created
         _wait_terminal(c, cal.json()["job_id"])
-        assert any(Path(".agent-cad-builds").glob("calibration-*-cube/*.stl"))
+        assert (cal_dir / "calibration-ender5s1-default-cube.stl").exists()
+        # an unknown filament is now rejected (no silent fallback)
+        assert c.post("/calibrate", json={"target": "cube", "filament_id": "nope"}).status_code == 404
         # an invalid target is rejected by the Literal
         assert c.post("/calibrate", json={"target": "sphere"}).status_code == 422

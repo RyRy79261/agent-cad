@@ -8,9 +8,14 @@ endpoints + the chat-namespaced generate/slice live in ``main.py``.
 from __future__ import annotations
 
 import shutil
+import threading
 import time
 import uuid
 from typing import Any
+
+# Serializes chat read-modify-write so concurrent appends (request + job threads)
+# can't clobber one another (atomic_write_json prevents corruption, not lost updates).
+_CHAT_LOCK = threading.Lock()
 
 from api.schemas import Chat, Message
 from api.store import Store
@@ -59,8 +64,9 @@ def append_message(
     content: str,
     **fields: Any,
 ) -> Chat | None:
-    chat = get_chat(store, chat_id)
-    if chat is None:
-        return None
-    chat.messages.append(Message(role=role, content=content, ts=time.time(), **fields))
-    return save_chat(store, chat)
+    with _CHAT_LOCK:
+        chat = get_chat(store, chat_id)
+        if chat is None:
+            return None
+        chat.messages.append(Message(role=role, content=content, ts=time.time(), **fields))
+        return save_chat(store, chat)

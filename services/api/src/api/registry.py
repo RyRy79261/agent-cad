@@ -97,12 +97,16 @@ def save_printer(store: Store, printer: Printer) -> Printer:
 
 
 def set_default_printer(store: Store, printer_id: str) -> None:
-    """Make ``printer_id`` the sole default printer."""
+    """Make ``printer_id`` the sole default printer + keep settings.json in sync."""
     for p in list_printers(store):
         want = p.id == printer_id
         if p.default != want:
             p.default = want
             save_printer(store, p)
+    settings = load_settings(store)
+    if settings.default_printer_id != printer_id:
+        settings.default_printer_id = printer_id
+        save_settings(store, settings)
 
 
 def delete_printer(store: Store, printer_id: str) -> None:

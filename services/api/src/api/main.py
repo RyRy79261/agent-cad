@@ -846,7 +846,18 @@ async def import_stl(file: UploadFile = File(...)) -> dict:
     import_id = uuid.uuid4().hex[:12]
     name = Path(file.filename or "import.stl").name
     dst = store.imports_dir / f"{import_id}.stl"
-    dst.write_bytes(await file.read())
+    max_bytes = 100 * 1024 * 1024  # 100 MB cap, streamed to disk (no full-payload in RAM)
+    size, too_big = 0, False
+    with dst.open("wb") as out:
+        while chunk := await file.read(1024 * 1024):
+            size += len(chunk)
+            if size > max_bytes:
+                too_big = True
+                break
+            out.write(chunk)
+    if too_big:
+        dst.unlink(missing_ok=True)
+        raise HTTPException(status_code=413, detail="STL too large (max 100 MB)")
     try:
         mesh = trimesh.load(dst, force="mesh")
         ext = [float(v) for v in mesh.extents]
@@ -869,14 +880,20 @@ async def import_stl(file: UploadFile = File(...)) -> dict:
 @app.post("/calibrate", response_model=JobRef, tags=["calibration"])
 def calibrate(body: CalibrateIn) -> JobRef:
     """Slice a reference object (cube or Benchy) at a filament's settings — the test print."""
-    printer = get_printer(store, body.printer_id) if body.printer_id else default_printer(store)
+    if body.printer_id:
+        printer = get_printer(store, body.printer_id)
+        if printer is None:
+            raise HTTPException(status_code=404, detail=f"Unknown printer: {body.printer_id}")
+    else:
+        printer = default_printer(store)
     settings = body.settings
     if settings is None and printer is not None:
-        fil = None
         if body.filament_id:
             fil = next((f for f in printer.filaments if f.id == body.filament_id), None)
-        if fil is None and printer.filaments:
-            fil = printer.filaments[0]
+            if fil is None:
+                raise HTTPException(status_code=404, detail=f"Unknown filament: {body.filament_id}")
+        else:
+            fil = printer.filaments[0] if printer.filaments else None
         if fil is not None:
             settings = fil.settings
     resolved = settings or SliceSettings()

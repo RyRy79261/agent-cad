@@ -47,12 +47,15 @@ class PlateInfo:
         total = 0.0
         found = False
         for f in self.filaments:
-            if raw := f.get("used_m"):
-                total += float(raw)
-                found = True
-            elif raw_mm := f.get("used_mm"):
-                total += float(raw_mm) / 1000.0
-                found = True
+            raw, divisor = f.get("used_m"), 1.0
+            if not raw:
+                raw, divisor = f.get("used_mm"), 1000.0
+            if raw:
+                try:
+                    total += float(raw) / divisor
+                    found = True
+                except (ValueError, TypeError):
+                    continue  # best-effort: skip non-numeric values
         return round(total, 3) if found else None
 
     @property
@@ -157,16 +160,20 @@ def count_gcode_layers(gcode_path: str | Path) -> int | None:
     """Count print layers in a plain ``.gcode`` file (OrcaSlicer markers, best-effort).
 
     Prefers an explicit ``; total layer number: N`` header; falls back to counting
-    ``;LAYER_CHANGE`` markers. Returns None when neither is present.
+    ``;LAYER_CHANGE`` markers. Streams line-by-line so a large g-code file isn't read
+    wholesale into memory. Returns None when neither is present.
     """
     try:
-        text = Path(gcode_path).read_text(errors="ignore")
+        n = 0
+        with Path(gcode_path).open("r", errors="ignore") as fh:
+            for line in fh:
+                if m := _LAYER_TOTAL_RE.search(line):
+                    return int(m.group(1))
+                if _LAYER_CHANGE_RE.match(line):
+                    n += 1
+        return n or None
     except OSError:
         return None
-    if m := _LAYER_TOTAL_RE.search(text):
-        return int(m.group(1))
-    n = len(_LAYER_CHANGE_RE.findall(text))
-    return n or None
 
 
 def summarize(archive: str | Path) -> dict[str, Any]:

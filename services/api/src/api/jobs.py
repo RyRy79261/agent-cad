@@ -101,10 +101,16 @@ class JobStore:
         """Load persisted jobs once; mark any still in-flight as interrupted."""
         assert self._store is not None
         data = self._store.read_json(self._store.jobs_path, default=[]) or []
+        if not isinstance(data, list):  # a corrupt jobs.json must not brick startup
+            data = []
         changed = False
         with self._lock:
             for d in data:
-                job = Job.from_dict(d)
+                try:
+                    job = Job.from_dict(d)
+                except (TypeError, KeyError, ValueError):
+                    changed = True  # drop the bad record + rewrite
+                    continue
                 if job.status in _ACTIVE:
                     job.status = JobStatus.INTERRUPTED
                     if job.finished_at is None:

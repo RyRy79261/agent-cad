@@ -51,9 +51,9 @@ class SliceSettings(BaseModel):
 class BuildVolume(BaseModel):
     """Print envelope in millimetres (mirrors ``cad.printer.BuildVolume``)."""
 
-    x: float
-    y: float
-    z: float
+    x: float = Field(..., gt=0)
+    y: float = Field(..., gt=0)
+    z: float = Field(..., gt=0)
 
 
 class FilamentProfile(BaseModel):
@@ -84,9 +84,9 @@ class Printer(BaseModel):
     name: str
     kind: str = "FDM"
     build_volume: BuildVolume
-    nozzle_diameter_mm: float = 0.4
+    nozzle_diameter_mm: float = Field(default=0.4, gt=0)
     firmware: str = "Marlin"  # editable display metadata; not load-bearing for slicing
-    bed_margin_mm: float = 5.0
+    bed_margin_mm: float = Field(default=5.0, ge=0)
     default: bool = False
     filaments: list[FilamentProfile] = Field(default_factory=list)
 

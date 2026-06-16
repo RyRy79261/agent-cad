@@ -89,12 +89,12 @@ def clear_chats(store: Store) -> int:
         return 0
     dirs = [d for d in store.chats_dir.iterdir() if d.is_dir()]
     for d in dirs:
-        shutil.rmtree(d, ignore_errors=True)
+        shutil.rmtree(d)  # let failures propagate rather than report a false count
     return len(dirs)
 
 
 def reset_store(store: Store) -> None:
     """Wipe the store and re-seed it to first-run state (Ender 5 S1 + PLA)."""
     if store.root.exists():
-        shutil.rmtree(store.root, ignore_errors=True)
+        shutil.rmtree(store.root)  # surface failures rather than report a false {ok: true}
     seed_first_run(store)
