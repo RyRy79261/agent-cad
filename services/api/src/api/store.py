@@ -22,6 +22,7 @@ passes it in as ``root``.)
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import tempfile
@@ -107,10 +108,8 @@ class Store:
                 os.fsync(fh.fileno())
             os.replace(tmp, path)
         except BaseException:
-            try:
+            with contextlib.suppress(OSError):
                 os.unlink(tmp)
-            except OSError:
-                pass
             raise
 
     def read_json(self, path: Path | str, default: Any = None) -> Any:

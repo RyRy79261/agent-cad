@@ -13,12 +13,12 @@ import time
 import uuid
 from typing import Any
 
+from api.schemas import Chat, Message
+from api.store import Store
+
 # Serializes chat read-modify-write so concurrent appends (request + job threads)
 # can't clobber one another (atomic_write_json prevents corruption, not lost updates).
 _CHAT_LOCK = threading.Lock()
-
-from api.schemas import Chat, Message
-from api.store import Store
 
 
 def create_chat(store: Store, title: str | None = None) -> Chat:

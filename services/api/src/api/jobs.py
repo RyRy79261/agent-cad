@@ -12,6 +12,7 @@ thread pool). Pass ``store=None`` for a pure in-memory store (e.g. tests).
 
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 import traceback
@@ -125,11 +126,9 @@ class JobStore:
         if self._store is None:
             return
         snapshot = [j.to_dict() for j in self._jobs.values()]
-        try:
+        # Persistence is best-effort; never let a disk hiccup crash a job.
+        with contextlib.suppress(OSError):
             self._store.atomic_write_json(self._store.jobs_path, snapshot)
-        except OSError:
-            # Persistence is best-effort; never let a disk hiccup crash a job.
-            pass
 
     # --- lifecycle ------------------------------------------------------ #
     def submit(

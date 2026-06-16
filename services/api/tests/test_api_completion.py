@@ -5,11 +5,10 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
 from api.chats import get_chat, save_chat
 from api.interview import _parse_interview, interview_turn
 from api.main import app, store
+from fastapi.testclient import TestClient
 
 _CUBE_STL = Path(__file__).resolve().parents[2] / "slice" / "tests" / "fixtures" / "cube20.stl"
 
@@ -78,7 +77,9 @@ def test_api_completion_http():
         # a chat with a model.py present -> refine submits a job
         gen = c.post("/chats", json={"title": "gen"}).json()["id"]
         (store.artifacts_dir(gen) / "model.py").write_text("def build(p): return None\n")
-        ch = get_chat(store, gen); ch.current_stl = "model.stl"; save_chat(store, ch)
+        ch = get_chat(store, gen)
+        ch.current_stl = "model.stl"
+        save_chat(store, ch)
         assert c.post(f"/chats/{gen}/refine", json={"instruction": "wider"}).status_code == 200
 
         # --- calibrate: cube target builds + slices in one job (slice needs OrcaSlicer) ---

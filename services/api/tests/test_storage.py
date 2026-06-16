@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from api import storage
 from api.chats import create_chat
 from api.registry import default_printer, seed_first_run
 from api.store import Store
+
+from api import storage
 
 
 def test_usage_counts_chats_models_slices(tmp_path):

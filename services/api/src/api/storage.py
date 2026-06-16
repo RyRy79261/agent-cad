@@ -6,6 +6,7 @@ plus clear-artifacts (keep sources) / clear-chats / reset.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 from pathlib import Path
 from typing import Any
@@ -22,10 +23,8 @@ def _dir_size(path: Path) -> int:
     if path.exists():
         for p in path.rglob("*"):
             if p.is_file():
-                try:
+                with contextlib.suppress(OSError):
                     total += p.stat().st_size
-                except OSError:
-                    pass
     return total
 
 

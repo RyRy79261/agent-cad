@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
-
 from api.chats import append_message, create_chat, delete_chat, get_chat, list_chats
 from api.main import app
 from api.store import Store
+from fastapi.testclient import TestClient
 
 # --- store-level CRUD (clean, tmp_path) ----------------------------------- #
 

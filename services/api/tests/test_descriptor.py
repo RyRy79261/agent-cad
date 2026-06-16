@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from annotated_types import Ge, Le
-
 from api.descriptor import build_descriptor
 from api.registry import seed_ender5s1
 from api.schemas import SliceSettings

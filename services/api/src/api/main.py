@@ -18,6 +18,7 @@ import re
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -33,10 +34,9 @@ from api.chats import (
     list_chats,
     save_chat,
 )
-
+from api.descriptor import build_descriptor
 from api.jobs import JobStore
 from api.projects import get_part, list_parts
-from api.descriptor import build_descriptor
 from api.registry import (
     default_printer,
     delete_printer,
@@ -837,7 +837,7 @@ def chat_slice(chat_id: str, body: ChatSliceIn | None = None) -> JobRef:
 # STL import + calibration test prints                                        #
 # --------------------------------------------------------------------------- #
 @app.post("/imports", tags=["imports"])
-async def import_stl(file: UploadFile = File(...)) -> dict:
+async def import_stl(file: Annotated[UploadFile, File()]) -> dict:
     """Upload + validate an STL (trimesh), store it under ~/.agent-cad/imports/<id>.stl."""
     import trimesh
     from cad.printer import fits
