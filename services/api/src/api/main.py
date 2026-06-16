@@ -658,7 +658,7 @@ def get_chat_artifact(chat_id: str, filename: str) -> FileResponse:
 
 @app.post("/chats/{chat_id}/generate", response_model=JobRef, tags=["chats"])
 def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
-    """Generate a model into the chat's namespace (Anthropic driver, max effort)."""
+    """Generate a model into the chat's namespace (claude-code driver — Claude subscription)."""
     chat = get_chat(store, chat_id)
     if chat is None:
         raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
@@ -673,11 +673,11 @@ def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
     def work() -> dict:
         from cad.generate import generate_part
 
-        # Anthropic driver per the locked v1 decision; effort=max is a driver concern.
+        # claude-code driver (the user's Claude subscription, no metered API key):
+        # driver=None → $AGENT_CAD_LLM_DRIVER, default "claude-code".
         result = generate_part(
             prompt,
             art_dir,
-            driver="anthropic",
             max_rounds=2,
             verify=True,
             name="model",
@@ -704,7 +704,7 @@ def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
     def work() -> dict:
         from api.interview import interview_turn
 
-        result = interview_turn(brief, driver="anthropic")
+        result = interview_turn(brief)  # default driver: claude-code (subscription)
         ready = result.get("status") != "question" or rounds >= 6  # cap at 6 questions
         c = get_chat(store, chat_id)
         if c is not None:
@@ -768,7 +768,7 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
             "Return the COMPLETE updated model.py (edit, do not start over)."
         )
         result = generate_part(
-            augmented, art_dir, driver="anthropic", max_rounds=2,
+            augmented, art_dir, max_rounds=2,
             verify=True, name="model", out_dir=str(art_dir),
         )
         return _attach_build_to_chat(chat_id, result)

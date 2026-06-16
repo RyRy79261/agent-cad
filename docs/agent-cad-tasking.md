@@ -6,8 +6,8 @@
 
 **LOCKED 2026-06-15** (the owner's calls):
 
-- **LLM driver → Anthropic SDK only** for v1 (drop `claude-code` + `ollama`). Needs `ANTHROPIC_API_KEY` + `uv sync --extra anthropic`. (FOUND-3, API-7/9, SCR-005.)
-- **effort → not a user knob; every generate/interview runs at MAX effort** (`output_config.effort: "max"` via the Anthropic SDK). Drop the `effort` control; hardcode max. (FOUND-3, API-7.)
+- **LLM driver → `claude-code` (the Claude subscription) for v1** — runs on the user's existing Claude Code subscription via the local `claude` CLI in headless `-p` mode; **no metered API key**. The `anthropic` SDK + `ollama` drivers stay selectable via `$AGENT_CAD_LLM_DRIVER` but are not the default. (FOUND-3, API-7/9, SCR-005.) *(Reverts the 2026-06-15 "Anthropic SDK only" lock — updated 2026-06-16.)*
+- **effort → not a user knob.** The `claude-code` driver runs the `claude` CLI with its own reasoning defaults — there is no `output_config.effort` to set and no `effort` control in the app. (FOUND-3, API-7.)
 - **Interview → job-based, capped at 6 rounds, always skippable** (thin prompt+parse over the driver; no new driver method). (API-9, M3.)
 - **One printer (Ender 5 S1)** = the only *sliceable* printer, BUT the Equipment / Printer Detail / Filament settings screens are **still built and visible**. Registry-only scaffolding; no per-printer range overlays. (FOUND-13, SCR-016..021.)
 - **Literal promotion** of `infill_pattern`/`seam_position` — **done** (FOUND-5 ✓). Closes the validation hole + makes select options derived.

@@ -47,7 +47,7 @@ def _parse_interview(reply: str) -> dict:
     return {"status": "ready"}
 
 
-def interview_turn(brief: str, *, driver: str | None = "anthropic", model: str | None = None) -> dict:
+def interview_turn(brief: str, *, driver: str | None = None, model: str | None = None) -> dict:
     """One clarifying turn. Returns ``{status: question, question, suggestions}`` or
     ``{status: ready}`` — never raises, never blocks intake."""
     try:

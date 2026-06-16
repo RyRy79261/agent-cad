@@ -74,7 +74,7 @@ def test_chat_http_flow():
         assert c.get(f"/chats/{cid}/artifacts/nope.stl").status_code == 404
         assert c.get(f"/chats/{cid}/artifacts/..%2f..%2fsettings.json").status_code == 404
 
-        # generate submits a job (real generation needs ANTHROPIC_API_KEY)
+        # generate submits a job (real generation needs the claude CLI on PATH)
         assert c.post(f"/chats/{cid}/generate", json={"prompt": "a small hook"}).status_code == 200
 
         # delete

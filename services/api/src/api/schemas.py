@@ -94,8 +94,9 @@ class Printer(BaseModel):
 class Settings(BaseModel):
     """App settings persisted to ``~/.agent-cad/settings.json``.
 
-    No ``effort`` knob — generation runs at MAX effort (locked decision);
-    ``active_model`` is the Anthropic model id.
+    ``active_model`` is the model id/alias passed to the LLM driver. v1 uses the
+    ``claude-code`` driver (the user's Claude subscription — no metered API key);
+    ``None``/default lets the ``claude`` CLI use its session model.
     """
 
     active_model: str = "claude-opus-4-8"
