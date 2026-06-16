@@ -9,6 +9,11 @@
  * the design pass (the WASM/loader wiring is described inline).
  */
 
-export { StlViewer, type StlViewerProps } from "./StlViewer.js";
+export { StlViewer, type StlViewerProps, DEFAULT_STL_COLOR } from "./StlViewer.js";
 export { StepViewer, type StepViewerProps } from "./StepViewer.js";
-export { GcodeViewer, type GcodeViewerProps } from "./GcodeViewer.js";
+export {
+  GcodeViewer,
+  type GcodeViewerProps,
+  DEFAULT_GCODE_BACKGROUND,
+  DEFAULT_GCODE_EXTRUSION,
+} from "./GcodeViewer.js";
