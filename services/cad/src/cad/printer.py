@@ -59,6 +59,23 @@ ENDER_5_S1 = Printer(
 )
 
 
+# The fit check targets the registry's *default* printer. The API sets this at startup
+# from ~/.agent-cad (``set_active_printer``); it defaults to the Ender 5 S1 so the CLI
+# and tests work with zero setup.
+_active_printer: Printer = ENDER_5_S1
+
+
+def set_active_printer(printer: Printer) -> None:
+    """Point fit checks at ``printer`` (the registry's default machine)."""
+    global _active_printer
+    _active_printer = printer
+
+
+def active_printer() -> Printer:
+    """The printer ``fits()`` checks against when no explicit printer is given."""
+    return _active_printer
+
+
 @dataclass(frozen=True)
 class FitResult:
     """Outcome of checking a part's bounding box against a build volume."""
@@ -87,7 +104,7 @@ class FitResult:
 
 def fits(
     size_mm: dict[str, float] | tuple[float, float, float],
-    printer: Printer = ENDER_5_S1,
+    printer: Printer | None = None,
     *,
     allow_rotation: bool = True,
     margin: float | None = None,
@@ -100,6 +117,8 @@ def fits(
     is considered and the better-fitting orientation is reported. ``margin``
     overrides the printer's default ``bed_margin_mm`` when given.
     """
+    if printer is None:
+        printer = _active_printer
     if isinstance(size_mm, dict):
         sx, sy, sz = float(size_mm["x"]), float(size_mm["y"]), float(size_mm["z"])
     else:

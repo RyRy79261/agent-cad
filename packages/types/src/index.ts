@@ -55,7 +55,7 @@ export type ScanCleanRequest = z.infer<typeof ScanCleanRequest>;
 
 // --- Responses ------------------------------------------------------------- //
 
-export const JobStatus = z.enum(["queued", "running", "succeeded", "failed"]);
+export const JobStatus = z.enum(["queued", "running", "succeeded", "failed", "interrupted"]);
 export type JobStatus = z.infer<typeof JobStatus>;
 
 export const JobRef = z.object({
@@ -74,6 +74,10 @@ export const Job = z.object({
   finished_at: z.number().nullable(),
   result: z.record(z.string(), z.unknown()).nullable(),
   error: z.string().nullable(),
+  /** Coarse progress label for long chat generations. */
+  phase: z.string().nullish(),
+  /** Links a job to its chat so a reloaded chat re-attaches its result. */
+  chat_id: z.string().nullish(),
 });
 export type Job = z.infer<typeof Job>;
 
@@ -141,8 +145,175 @@ export const PartSummary = z.object({
 });
 export type PartSummary = z.infer<typeof PartSummary>;
 
+// --- Slice settings + registry --------------------------------------------- //
+
+/**
+ * Per-slice overrides — mirrors `SliceSettings` in `schemas.py`. These bounds are the
+ * **single source of truth** for the schema-driven settings UI (the descriptor's
+ * min/max/options derive from here). `infill_pattern`/`seam_position` are enums on both
+ * sides so the server rejects garbage.
+ */
+export const SliceSettings = z.object({
+  infill_density: z.number().int().min(0).max(100).nullish(),
+  wall_speed: z.number().int().min(5).max(120).nullish(),
+  jerk: z.number().int().min(1).max(40).nullish(),
+  bed_temp: z.number().int().min(0).max(110).nullish(),
+  nozzle_temp: z.number().int().min(150).max(300).nullish(),
+  flow: z.number().min(0.8).max(1.2).nullish(),
+  layer_height: z.number().min(0.08).max(0.32).nullish(),
+  wall_loops: z.number().int().min(1).max(10).nullish(),
+  top_layers: z.number().int().min(0).max(20).nullish(),
+  bottom_layers: z.number().int().min(0).max(20).nullish(),
+  infill_pattern: z.enum(["crosshatch", "gyroid", "grid", "cubic"]).nullish(),
+  seam_position: z.enum(["aligned", "nearest", "back", "random"]).nullish(),
+  brim_width: z.number().min(0).max(20).nullish(),
+  support: z.boolean().nullish(),
+  support_threshold: z.number().int().min(0).max(90).nullish(),
+  retraction_length: z.number().min(0).max(6).nullish(),
+  raw: z.record(z.string(), z.string()).nullish(),
+});
+export type SliceSettings = z.infer<typeof SliceSettings>;
+
+/** A material profile saved on a printer — mirrors `FilamentProfile`. */
+export const FilamentProfile = z.object({
+  id: z.string(),
+  name: z.string(),
+  material: z.string(),
+  brand: z.string().nullish(),
+  color: z.string().nullish(),
+  settings: SliceSettings.default({}),
+  default_settings: SliceSettings.default({}),
+});
+export type FilamentProfile = z.infer<typeof FilamentProfile>;
+
+/** A registered machine + its filament profiles — mirrors the `Printer` registry record. */
+export const Printer = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: z.string().default("FDM"),
+  build_volume: BuildVolume,
+  nozzle_diameter_mm: z.number().default(0.4),
+  firmware: z.string().default("Marlin"),
+  bed_margin_mm: z.number().default(5),
+  default: z.boolean().default(false),
+  filaments: z.array(FilamentProfile).default([]),
+});
+export type Printer = z.infer<typeof Printer>;
+
+/** App settings persisted to `~/.agent-cad/settings.json` — mirrors `Settings`. No `effort` (generation runs at max). */
+export const Settings = z.object({
+  active_model: z.string().default("claude-opus-4-8"),
+  default_printer_id: z.string().nullish(),
+  storage_location: z.string().nullish(),
+  theme: z.string().default("system"),
+  auto_clear_days: z.number().int().min(0).default(0),
+  user_name: z.string().nullish(),
+});
+export type Settings = z.infer<typeof Settings>;
+
+// --- Schema-driven settings descriptor (§3a) ------------------------------- //
+
+export const SettingsField = z.object({
+  key: z.string(),
+  label: z.string(),
+  help: z.string().nullish(),
+  input_type: z.enum(["slider", "number", "percent", "select", "toggle", "text"]),
+  scope: z.enum(["process", "machine", "filament", "raw"]),
+  binding: z.enum(["per-slice", "per-filament", "per-printer"]),
+  group: z.string(),
+  unit: z.string().nullish(),
+  default: z.unknown().nullish(),
+  min: z.number().nullish(),
+  max: z.number().nullish(),
+  step: z.number().nullish(),
+  options: z.array(z.string()).nullish(),
+  advanced: z.boolean().default(false),
+  depends_on: z.object({ field: z.string(), equals: z.unknown() }).nullish(),
+});
+export type SettingsField = z.infer<typeof SettingsField>;
+
+export const SettingsGroup = z.object({
+  id: z.string(),
+  label: z.string(),
+  default_expanded: z.boolean().default(true),
+});
+export type SettingsGroup = z.infer<typeof SettingsGroup>;
+
+export const SettingsDescriptor = z.object({
+  printer_id: z.string(),
+  printer_name: z.string(),
+  filament_id: z.string().nullish(),
+  schema_version: z.number().int().default(1),
+  groups: z.array(SettingsGroup),
+  fields: z.array(SettingsField),
+});
+export type SettingsDescriptor = z.infer<typeof SettingsDescriptor>;
+
+// --- Chats (the local-first chat workspace) -------------------------------- //
+
+export const ArtifactRef = z.object({
+  kind: z.string(),
+  name: z.string(),
+  url: z.string(),
+  fmt: z.string().nullish(),
+  bbox: z.record(z.string(), z.number()).nullish(),
+  fits_build_volume: z.boolean().nullish(),
+  slice_info: z.record(z.string(), z.unknown()).nullish(),
+});
+export type ArtifactRef = z.infer<typeof ArtifactRef>;
+
+export const Message = z.object({
+  role: z.string(),
+  content: z.string(),
+  ts: z.number().default(0),
+  quick_replies: z.array(z.string()).nullish(),
+  artifact_refs: z.array(ArtifactRef).default([]),
+});
+export type Message = z.infer<typeof Message>;
+
+export const Chat = z.object({
+  id: z.string(),
+  title: z.string(),
+  created_at: z.number(),
+  updated_at: z.number(),
+  status: z.string().default("new"),
+  printer_id: z.string().nullish(),
+  filament_id: z.string().nullish(),
+  current_stl: z.string().nullish(),
+  messages: z.array(Message).default([]),
+});
+export type Chat = z.infer<typeof Chat>;
+
+// --- Imports + interview + calibration ------------------------------------- //
+
+export const ImportResult = z.object({
+  id: z.string(),
+  name: z.string(),
+  bbox: z.object({ x: z.number(), y: z.number(), z: z.number() }),
+  fits_build_volume: z.boolean(),
+  watertight: z.boolean(),
+});
+export type ImportResult = z.infer<typeof ImportResult>;
+
+export const InterviewResult = z.object({
+  ok: z.boolean(),
+  ready: z.boolean(),
+  question: z.string().nullish(),
+  suggestions: z.array(z.string()).nullish(),
+  resolved_prompt: z.string().nullish(),
+});
+export type InterviewResult = z.infer<typeof InterviewResult>;
+
+export const CalibrateRequest = z.object({
+  target: z.enum(["cube", "benchy"]),
+  printer_id: z.string().nullish(),
+  filament_id: z.string().nullish(),
+  settings: SliceSettings.nullish(),
+});
+export type CalibrateRequest = z.infer<typeof CalibrateRequest>;
+
 /** Default local API base URL (the FastAPI server in `services/api`). */
-export const DEFAULT_API_URL = "http://127.0.0.1:8000";
+export const DEFAULT_API_URL = "http://127.0.0.1:8420";
 
 // --- Target printer -------------------------------------------------------- //
 

@@ -7,7 +7,7 @@ TS SDK in ``packages/types`` is generated from.
 
 Run locally::
 
-    uv run --package apiserver uvicorn api.main:app --reload --port 8000
+    uv run --package apiserver uvicorn api.main:app --reload --port 8420
     # or: agent-cad-api
 """
 
@@ -15,27 +15,70 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Annotated
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from api import storage as storage_mod
+from api.chats import (
+    append_message,
+    create_chat,
+    delete_chat,
+    get_chat,
+    list_chats,
+    save_chat,
+)
+from api.descriptor import build_descriptor
 from api.jobs import JobStore
 from api.projects import get_part, list_parts
+from api.registry import (
+    default_printer,
+    delete_printer,
+    get_printer,
+    list_printers,
+    load_settings,
+    remove_filament,
+    save_printer,
+    save_settings,
+    seed_first_run,
+    set_default_printer,
+    slugify,
+    upsert_filament,
+)
 from api.schemas import (
+    ArtifactRef,
     BuildRequest,
+    CalibrateIn,
+    Chat,
+    ChatCreate,
+    ChatGenerateIn,
+    ChatInterviewIn,
+    ChatMessageIn,
+    ChatRefineIn,
+    ChatSliceIn,
     ExtractRequest,
+    FilamentProfile,
     GenerateRequest,
     JobRef,
     OrcaSliceRequest,
+    Printer,
     PrusaSliceRequest,
+    ResetIn,
     ScanCleanRequest,
+    Settings,
+    SettingsDescriptor,
     SliceSettings,
 )
+from api.store import Store
 
-jobs = JobStore()
+store = Store()
+jobs = JobStore(store=store)  # durable: survives restart, recovers terminal results
 
 # Where API-triggered builds write their artifacts. Served read-only over HTTP at
 # /artifacts so the web viewer can fetch STL/3MF/SVG directly in the browser.
@@ -43,8 +86,25 @@ BUILDS_DIR = Path(os.environ.get("AGENT_CAD_BUILDS_DIR", ".agent-cad-builds")).r
 BUILDS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _sync_active_printer() -> None:
+    """Point the build-volume fit check at the registry's default printer (FOUND-8)."""
+    from cad.printer import BuildVolume, Printer, set_active_printer
+
+    p = default_printer(store)
+    if p is not None:
+        set_active_printer(
+            Printer(
+                name=p.name,
+                build_volume=BuildVolume(p.build_volume.x, p.build_volume.y, p.build_volume.z),
+                bed_margin_mm=p.bed_margin_mm,
+            )
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ANN201, ARG001
+    seed_first_run(store)  # create + seed ~/.agent-cad on first run (idempotent)
+    _sync_active_printer()  # fit checks target the registry's default printer
     yield
     jobs.shutdown()
 
@@ -56,10 +116,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# The Next.js control panel runs on a different port in dev.
+# The Next.js control panel runs on a different port in dev. Origins are
+# env-configurable (AGENT_CAD_CORS_ORIGINS, comma-separated) so the web can run on a
+# non-default port (e.g. when :3420 is taken) without a code change; defaults cover :3420.
+_cors_origins = [o.strip() for o in os.environ.get("AGENT_CAD_CORS_ORIGINS", "").split(",") if o.strip()] or [
+    "http://localhost:3420",
+    "http://127.0.0.1:3420",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -71,6 +137,150 @@ app.mount("/artifacts", StaticFiles(directory=str(BUILDS_DIR)), name="artifacts"
 @app.get("/health", tags=["meta"])
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/settings", response_model=Settings, tags=["settings"])
+def get_settings() -> Settings:
+    """The app settings (seeded defaults when settings.json is absent)."""
+    return load_settings(store)
+
+
+@app.put("/settings", response_model=Settings, tags=["settings"])
+def put_settings(settings: Settings) -> Settings:
+    """Persist app settings atomically; out-of-range values are rejected (422)."""
+    return save_settings(store, settings)
+
+
+# --------------------------------------------------------------------------- #
+# Storage & data management                                                   #
+# --------------------------------------------------------------------------- #
+@app.get("/storage/info", tags=["storage"])
+def storage_info_ep() -> dict:
+    return storage_mod.storage_info(store, app_version=app.version)
+
+
+@app.get("/storage/usage", tags=["storage"])
+def storage_usage_ep() -> dict:
+    """Disk usage computed from the store (chats / models / slices / bytes)."""
+    return storage_mod.usage(store)
+
+
+@app.post("/storage/clear-artifacts", tags=["storage"])
+def clear_artifacts_ep() -> dict:
+    """Delete regenerable geometry/g-code (keeps model.py / chat.json sources)."""
+    return {"bytes_freed": storage_mod.clear_artifacts(store)}
+
+
+@app.post("/storage/clear-chats", tags=["storage"])
+def clear_chats_ep() -> dict:
+    return {"removed": storage_mod.clear_chats(store)}
+
+
+@app.post("/storage/reset", tags=["storage"])
+def storage_reset_ep(body: ResetIn) -> dict:
+    """Danger: wipe the store and re-seed first-run state. Requires confirm=true."""
+    if not body.confirm:
+        raise HTTPException(status_code=400, detail="confirm required for reset")
+    storage_mod.reset_store(store)
+    _sync_active_printer()
+    return {"ok": True}
+
+
+@app.get(
+    "/printers/{printer_id}/settings-descriptor",
+    response_model=SettingsDescriptor,
+    tags=["settings"],
+)
+def get_settings_descriptor(printer_id: str, filament: str | None = None) -> SettingsDescriptor:
+    """The schema-driven settings descriptor for a printer (+ optional filament)."""
+    printer = get_printer(store, printer_id)
+    if printer is None:
+        raise HTTPException(status_code=404, detail=f"Unknown printer: {printer_id}")
+    fil = None
+    if filament is not None:
+        fil = next((f for f in printer.filaments if f.id == filament), None)
+        if fil is None:
+            raise HTTPException(status_code=404, detail=f"Unknown filament: {filament}")
+    return build_descriptor(printer, fil)
+
+
+# --------------------------------------------------------------------------- #
+# Printer + filament registry (the net-new multi-printer registry)            #
+# --------------------------------------------------------------------------- #
+@app.get("/printers", response_model=list[Printer], tags=["printers"])
+def list_printers_ep() -> list[Printer]:
+    return list_printers(store)
+
+
+@app.post("/printers", response_model=Printer, tags=["printers"])
+def create_printer_ep(printer: Printer) -> Printer:
+    """Create a printer (id slugified from name when blank)."""
+    if not printer.id:
+        printer.id = slugify(printer.name)
+    save_printer(store, printer)
+    if printer.default:
+        set_default_printer(store, printer.id)
+    _sync_active_printer()
+    result = get_printer(store, printer.id)
+    assert result is not None
+    return result
+
+
+@app.get("/printers/{printer_id}", response_model=Printer, tags=["printers"])
+def get_printer_ep(printer_id: str) -> Printer:
+    printer = get_printer(store, printer_id)
+    if printer is None:
+        raise HTTPException(status_code=404, detail=f"Unknown printer: {printer_id}")
+    return printer
+
+
+@app.put("/printers/{printer_id}", response_model=Printer, tags=["printers"])
+def update_printer_ep(printer_id: str, printer: Printer) -> Printer:
+    if get_printer(store, printer_id) is None:
+        raise HTTPException(status_code=404, detail=f"Unknown printer: {printer_id}")
+    printer.id = printer_id  # the path is authoritative
+    save_printer(store, printer)
+    if printer.default:
+        set_default_printer(store, printer_id)
+    _sync_active_printer()
+    result = get_printer(store, printer_id)
+    assert result is not None
+    return result
+
+
+@app.delete("/printers/{printer_id}", tags=["printers"])
+def delete_printer_ep(printer_id: str) -> dict[str, bool]:
+    try:
+        delete_printer(store, printer_id)
+    except ValueError as exc:  # last printer
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _sync_active_printer()
+    return {"ok": True}
+
+
+@app.post("/printers/{printer_id}/filaments", response_model=Printer, tags=["printers"])
+def add_filament_ep(printer_id: str, filament: FilamentProfile) -> Printer:
+    printer = upsert_filament(store, printer_id, filament)
+    if printer is None:
+        raise HTTPException(status_code=404, detail=f"Unknown printer: {printer_id}")
+    return printer
+
+
+@app.put("/printers/{printer_id}/filaments/{filament_id}", response_model=Printer, tags=["printers"])
+def update_filament_ep(printer_id: str, filament_id: str, filament: FilamentProfile) -> Printer:
+    filament.id = filament_id  # the path is authoritative
+    printer = upsert_filament(store, printer_id, filament)
+    if printer is None:
+        raise HTTPException(status_code=404, detail=f"Unknown printer: {printer_id}")
+    return printer
+
+
+@app.delete("/printers/{printer_id}/filaments/{filament_id}", response_model=Printer, tags=["printers"])
+def delete_filament_ep(printer_id: str, filament_id: str) -> Printer:
+    printer = remove_filament(store, printer_id, filament_id)
+    if printer is None:
+        raise HTTPException(status_code=404, detail=f"Unknown printer: {printer_id}")
+    return printer
 
 
 # --------------------------------------------------------------------------- #
@@ -135,61 +345,95 @@ def build_template(name: str) -> JobRef:
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
 
 
-def _submit_slice(name: str, settings: SliceSettings | None = None) -> JobRef:
-    """Slice ``<builds>/<name>/<name>.stl`` for the Ender 5 S1 and serve the g-code.
+def _slice_stl(
+    stl: Path,
+    out_dir: Path,
+    url_prefix: str,
+    settings: SliceSettings | None = None,
+    *,
+    chat_id: str | None = None,
+) -> JobRef:
+    """Slice an STL for the Ender 5 S1 into ``out_dir``, serving the g-code under ``url_prefix``.
 
-    Shared by template / generated / sample slicing — all write the same layout. The
-    ``settings`` body overrides the committed profile for this slice: typed fields via
-    :func:`slice_overrides`, plus arbitrary ``raw`` key→value pairs via
-    :func:`route_raw_overrides` (raw wins on conflict). The job result echoes the applied
-    settings + any override warnings and adds ``gcode_url`` (under ``/artifacts``); it
-    fails gracefully (``ok: false``) without OrcaSlicer.
+    The shared slice core (template / generated / sample / chat all use it). ``settings``
+    overrides the committed profile: typed fields via :func:`slice_overrides`, plus arbitrary
+    ``raw`` pairs via :func:`route_raw_overrides` (raw wins). The result echoes the applied
+    settings + warnings, adds ``gcode_url`` (``{url_prefix}/<file>``), and fills
+    ``layer_count`` from the extracted g-code when slice_info lacked it (API-5). When
+    ``chat_id`` is set, the chat is updated on completion (status + an assistant turn with the
+    g-code ref). Fails gracefully (``ok: false``) without OrcaSlicer.
     """
-    settings = settings or SliceSettings()
+    if not stl.exists():
+        raise HTTPException(status_code=409, detail=f"no STL to slice at {stl}")
+    resolved = settings or SliceSettings()
+
+    def work() -> dict:
+        result = _run_slice_inline(stl, out_dir, url_prefix, resolved)
+        if chat_id is not None:
+            _update_chat_after_slice(chat_id, result, result.get("gcode_path"))
+        return result
+
+    job = jobs.submit("slice.ender5s1", work, chat_id=chat_id)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+def _run_slice_inline(stl: Path, out_dir: Path, url_prefix: str, settings: SliceSettings) -> dict:
+    """The slice computation itself (no job, no chat side-effects) — returns the result dict.
+
+    Reused by the job-based slice routes (:func:`_slice_stl`) and by ``/calibrate`` (which
+    builds/stages a reference object then slices it in one job). Adds ``gcode_url`` under
+    ``url_prefix`` and fills ``layer_count`` from the extracted g-code (API-5).
+    """
+    from slicer import orca
+    from slicer.extract import count_gcode_layers
+    from slicer.profiles import (
+        ender5s1_profiles,
+        merge_overrides,
+        profile_with_overrides,
+        route_raw_overrides,
+        slice_overrides,
+    )
+
     typed = settings.model_dump(exclude={"raw"}, exclude_none=True)
     raw = settings.raw or {}
+    archive = out_dir / f"{stl.stem}.gcode.3mf"
+    profiles = ender5s1_profiles()
+    paths = dict(profiles)  # machine / process / filament -> Path
+    raw_overrides, warnings = route_raw_overrides(raw)
+    merged = merge_overrides(slice_overrides(**typed), raw_overrides)  # raw wins
+    for kind, override in merged.items():
+        paths[kind] = profile_with_overrides(
+            override, out_dir / f"_{kind}_override.json", base=profiles[kind]
+        )
+    result = orca.slice_model(
+        stl,
+        machine=paths["machine"],
+        process=paths["process"],
+        filaments=[paths["filament"]],
+        output=archive,
+        extract=True,
+    ).to_dict()
+    result["settings"] = typed
+    result["raw_overrides"] = raw
+    result["override_warnings"] = warnings
+    gpath = result.get("gcode_path")
+    if result.get("ok") and gpath:
+        result["gcode_url"] = f"{url_prefix}/{Path(gpath).name}"
+        layers = count_gcode_layers(gpath)
+        if layers is not None:
+            for plate in (result.get("info") or {}).get("plates", []):
+                if plate.get("layer_count") is None:
+                    plate["layer_count"] = layers
+    return result
+
+
+def _submit_slice(name: str, settings: SliceSettings | None = None) -> JobRef:
+    """Slice ``<builds>/<name>/<name>.stl`` (template / generated / sample path)."""
     part_dir = BUILDS_DIR / name
     stl = part_dir / f"{name}.stl"
     if not stl.exists():
         raise HTTPException(status_code=409, detail=f"build {name!r} first — no STL at {stl}")
-    archive = part_dir / f"{name}.gcode.3mf"
-
-    def work() -> dict:
-        from slicer import orca
-        from slicer.profiles import (
-            ender5s1_profiles,
-            merge_overrides,
-            profile_with_overrides,
-            route_raw_overrides,
-            slice_overrides,
-        )
-
-        profiles = ender5s1_profiles()
-        paths = dict(profiles)  # machine / process / filament -> Path
-        raw_overrides, warnings = route_raw_overrides(raw)
-        merged = merge_overrides(slice_overrides(**typed), raw_overrides)  # raw wins
-        for kind, override in merged.items():
-            paths[kind] = profile_with_overrides(
-                override, part_dir / f"_{kind}_override.json", base=profiles[kind]
-            )
-        result = orca.slice_model(
-            stl,
-            machine=paths["machine"],
-            process=paths["process"],
-            filaments=[paths["filament"]],
-            output=archive,
-            extract=True,
-        ).to_dict()
-        result["settings"] = typed
-        result["raw_overrides"] = raw
-        result["override_warnings"] = warnings
-        gpath = result.get("gcode_path")
-        if result.get("ok") and gpath:
-            result["gcode_url"] = f"/artifacts/{name}/{Path(gpath).name}"
-        return result
-
-    job = jobs.submit("slice.ender5s1", work)
-    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+    return _slice_stl(stl, part_dir, f"/artifacts/{name}", settings)
 
 
 @app.post("/templates/{name}/slice", response_model=JobRef, tags=["slice"])
@@ -253,6 +497,438 @@ def generate(req: GenerateRequest) -> JobRef:
 def slice_generated(name: str, settings: SliceSettings | None = None) -> JobRef:
     """Slice a generated part's STL for the Ender 5 S1 (generate it first)."""
     return _submit_slice(name, settings)
+
+
+# --------------------------------------------------------------------------- #
+# Chats (the local-first chat workspace; artifacts namespaced per chat)       #
+# --------------------------------------------------------------------------- #
+def _narrate_build(payload: dict) -> str:
+    """A short, templated (no-LLM) summary of a build result for the chat thread."""
+    if not payload.get("ok"):
+        return "I couldn't produce a printable model — " + (
+            payload.get("error") or "have a look at the attempts."
+        )
+    build = payload.get("build") or {}
+    meta = build.get("metadata") or {}
+    bbox = meta.get("bounding_box_mm")
+    verif = build.get("verification") or {}
+    bits = ["Here's your model."]
+    if bbox:
+        bits.append(f"It's {bbox['x']:.0f}×{bbox['y']:.0f}×{bbox['z']:.0f} mm.")
+    if meta.get("fits_build_volume") is True:
+        bits.append("Fits the bed.")
+    elif meta.get("fits_build_volume") is False:
+        bits.append("⚠ Doesn't fit the bed as-is.")
+    if verif.get("printable") is True:
+        bits.append("Printability checks passed.")
+    return " ".join(bits)
+
+
+def _narrate_slice(result: dict) -> str:
+    if not result.get("ok"):
+        err = (result.get("error") or "").lower()
+        if not err or "orca" in err or "not found" in err:
+            return "Slicing failed — is OrcaSlicer installed? See the Printer setup page."
+        return f"Slicing failed: {result.get('error')}"
+    plate = ((result.get("info") or {}).get("plates") or [{}])[0]
+    bits = ["Sliced and ready to print."]
+    if t := plate.get("print_time_s"):
+        bits.append(f"~{int(t // 3600)}h {int((t % 3600) // 60)}m,")
+    if plate.get("length_m"):
+        bits.append(f"{plate['length_m']:.1f} m /")
+    if plate.get("weight_g"):
+        bits.append(f"{plate['weight_g']:.1f} g filament,")
+    if plate.get("layer_count"):
+        bits.append(f"{plate['layer_count']} layers.")
+    return " ".join(bits)
+
+
+def _update_chat_after_slice(chat_id: str, result: dict, gpath: object) -> None:
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        return
+    refs: list[ArtifactRef] = []
+    if result.get("ok") and gpath:
+        gname = Path(str(gpath)).name
+        chat.status = "ready-to-print"
+        refs = [
+            ArtifactRef(
+                kind="gcode",
+                name=gname,
+                fmt="gcode",
+                url=f"/chats/{chat_id}/artifacts/{gname}",
+                slice_info=result.get("info"),
+            )
+        ]
+    else:
+        chat.status = "model-ready"
+    save_chat(store, chat)
+    append_message(store, chat_id, "assistant", _narrate_slice(result), artifact_refs=refs)
+
+
+def _resolve_filament_settings(chat: Chat, body: ChatSliceIn | None) -> SliceSettings:
+    """The SliceSettings to slice with: explicit override > the chat's filament > default."""
+    if body is not None and body.settings is not None:
+        return body.settings
+    fil_id = (body.filament_id if body else None) or chat.filament_id
+    printer = get_printer(store, chat.printer_id) if chat.printer_id else default_printer(store)
+    if printer is not None:
+        fil = None
+        if fil_id:
+            fil = next((f for f in printer.filaments if f.id == fil_id), None)
+        if fil is None and printer.filaments:
+            fil = printer.filaments[0]
+        if fil is not None:
+            return fil.settings
+    return SliceSettings()
+
+
+def _attach_build_to_chat(chat_id: str, result_obj: object) -> dict:
+    """Record a generate/refine build's artifacts on the chat + post a narration turn."""
+    payload = result_obj.to_dict()  # type: ignore[attr-defined]
+    build = getattr(result_obj, "build", None) or {}
+    artifacts = (build.get("artifacts") or {}) if build else {}
+    refs: list[ArtifactRef] = []
+    stl_name: str | None = None
+    for fmt, path in artifacts.items():
+        fname = Path(path).name
+        refs.append(
+            ArtifactRef(kind="generated", name=fname, fmt=fmt, url=f"/chats/{chat_id}/artifacts/{fname}")
+        )
+        if fmt == "stl":
+            stl_name = fname
+    payload["artifact_urls"] = {
+        fmt: f"/chats/{chat_id}/artifacts/{Path(p).name}" for fmt, p in artifacts.items()
+    }
+    c = get_chat(store, chat_id)
+    if c is not None:
+        if stl_name:
+            c.current_stl = stl_name
+        c.status = "model-ready" if payload.get("ok") else "new"
+        save_chat(store, c)
+        append_message(store, chat_id, "assistant", _narrate_build(payload), artifact_refs=refs)
+    return payload
+
+
+@app.get("/chats", response_model=list[Chat], tags=["chats"])
+def list_chats_ep() -> list[Chat]:
+    return list_chats(store)
+
+
+@app.post("/chats", response_model=Chat, tags=["chats"])
+def create_chat_ep(body: ChatCreate) -> Chat:
+    title = body.title or (body.prompt[:48] if body.prompt else None)
+    chat = create_chat(store, title)
+    if body.prompt:
+        chat = append_message(store, chat.id, "user", body.prompt) or chat
+    return chat
+
+
+@app.get("/chats/{chat_id}", response_model=Chat, tags=["chats"])
+def get_chat_ep(chat_id: str) -> Chat:
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    return chat
+
+
+@app.delete("/chats/{chat_id}", tags=["chats"])
+def delete_chat_ep(chat_id: str) -> dict[str, bool]:
+    delete_chat(store, chat_id)
+    return {"ok": True}
+
+
+@app.post("/chats/{chat_id}/messages", response_model=Chat, tags=["chats"])
+def append_message_ep(chat_id: str, body: ChatMessageIn) -> Chat:
+    chat = append_message(store, chat_id, body.role, body.content)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    return chat
+
+
+@app.get("/chats/{chat_id}/artifacts/{filename}", tags=["chats"])
+def get_chat_artifact(chat_id: str, filename: str) -> FileResponse:
+    """Serve a chat's artifact (STL / g-code / …) read-only, guarding path traversal."""
+    art_dir = store.artifacts_dir(chat_id).resolve()
+    path = (art_dir / filename).resolve()
+    if art_dir not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="artifact not found")
+    return FileResponse(str(path))
+
+
+@app.post("/chats/{chat_id}/generate", response_model=JobRef, tags=["chats"])
+def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
+    """Generate a model into the chat's namespace (Anthropic driver, max effort)."""
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    append_message(store, chat_id, "user", body.prompt)
+    chat = get_chat(store, chat_id)
+    assert chat is not None
+    chat.status = "generating"
+    save_chat(store, chat)
+    art_dir = store.artifacts_dir(chat_id)
+    prompt = body.prompt
+
+    def work() -> dict:
+        from cad.generate import generate_part
+
+        # Anthropic driver per the locked v1 decision; effort=max is a driver concern.
+        result = generate_part(
+            prompt,
+            art_dir,
+            driver="anthropic",
+            max_rounds=2,
+            verify=True,
+            name="model",
+            out_dir=str(art_dir),
+        )
+        return _attach_build_to_chat(chat_id, result)
+
+    job = jobs.submit("cad.generate", work, chat_id=chat_id)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+@app.post("/chats/{chat_id}/interview", response_model=JobRef, tags=["chats"])
+def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
+    """Clarify-before-generate: one LLM turn that asks a question or signals ready (cap 6)."""
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    append_message(store, chat_id, "user", body.prompt)
+    chat = get_chat(store, chat_id)
+    assert chat is not None
+    rounds = sum(1 for m in chat.messages if m.role == "assistant" and m.quick_replies is not None)
+    brief = "\n".join(m.content for m in chat.messages if m.role == "user")
+
+    def work() -> dict:
+        from api.interview import interview_turn
+
+        result = interview_turn(brief, driver="anthropic")
+        ready = result.get("status") != "question" or rounds >= 6  # cap at 6 questions
+        c = get_chat(store, chat_id)
+        if c is not None:
+            if not ready:
+                append_message(
+                    store, chat_id, "assistant", result["question"],
+                    quick_replies=result.get("suggestions") or [],
+                )
+                c2 = get_chat(store, chat_id)
+                if c2 is not None:
+                    c2.status = "interviewing"
+                    save_chat(store, c2)
+            else:
+                c.status = "interviewed"
+                save_chat(store, c)
+        return {
+            "ok": True,
+            "ready": ready,
+            "question": result.get("question") if not ready else None,
+            "suggestions": result.get("suggestions") if not ready else None,
+            "resolved_prompt": brief if ready else None,
+        }
+
+    job = jobs.submit("chat.interview", work, chat_id=chat_id)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+@app.post("/chats/{chat_id}/refine", response_model=JobRef, tags=["chats"])
+def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
+    """Refine the chat's current model by editing its model.py (prior versions kept)."""
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    art_dir = store.artifacts_dir(chat_id)
+    if not (art_dir / "model.py").exists():
+        raise HTTPException(status_code=409, detail="nothing to refine — generate a model first")
+    append_message(store, chat_id, "user", body.instruction)
+    chat = get_chat(store, chat_id)
+    assert chat is not None
+    chat.status = "generating"
+    save_chat(store, chat)
+    instruction = body.instruction
+
+    def work() -> dict:
+        import shutil
+
+        from cad.generate import generate_part
+
+        prior_py = art_dir / "model.py"
+        # Keep every version: snapshot the prior source before overwriting (refine v<N>).
+        hist = art_dir / "history"
+        hist.mkdir(exist_ok=True)
+        n = len(list(hist.glob("model.v*.py"))) + 1
+        shutil.copyfile(prior_py, hist / f"model.v{n}.py")
+        prior = prior_py.read_text(encoding="utf-8")
+        augmented = (
+            "Refine an EXISTING build123d part. Here is the current `model.py`:\n\n"
+            f"```python\n{prior.strip()}\n```\n\n"
+            "Apply this change, keeping everything else intact and still parametric:\n\n"
+            f"{instruction.strip()}\n\n"
+            "Return the COMPLETE updated model.py (edit, do not start over)."
+        )
+        result = generate_part(
+            augmented, art_dir, driver="anthropic", max_rounds=2,
+            verify=True, name="model", out_dir=str(art_dir),
+        )
+        return _attach_build_to_chat(chat_id, result)
+
+    job = jobs.submit("cad.refine", work, chat_id=chat_id)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+@app.post("/chats/{chat_id}/imports/{import_id}/attach", response_model=Chat, tags=["chats"])
+def attach_import(chat_id: str, import_id: str) -> Chat:
+    """Attach a previously-uploaded STL into a chat as its current model."""
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    src = store.imports_dir / f"{import_id}.stl"
+    if not src.exists():
+        raise HTTPException(status_code=404, detail=f"unknown import: {import_id}")
+    import shutil
+
+    import trimesh
+    from cad.printer import fits
+
+    art_dir = store.artifacts_dir(chat_id)
+    art_dir.mkdir(parents=True, exist_ok=True)
+    dst = art_dir / "model.stl"
+    shutil.copyfile(src, dst)
+    mesh = trimesh.load(dst, force="mesh")
+    ext = [float(v) for v in mesh.extents]
+    fit = fits({"x": ext[0], "y": ext[1], "z": ext[2]})
+    bbox = {"x": round(ext[0], 2), "y": round(ext[1], 2), "z": round(ext[2], 2)}
+    chat.current_stl = "model.stl"
+    chat.status = "model-ready"
+    save_chat(store, chat)
+    fit_msg = "Fits the bed." if fit.fits else "⚠ Doesn't fit the bed as-is."
+    ref = ArtifactRef(
+        kind="import", name="model.stl", fmt="stl",
+        url=f"/chats/{chat_id}/artifacts/model.stl", bbox=bbox, fits_build_volume=fit.fits,
+    )
+    append_message(
+        store, chat_id, "assistant",
+        f"Imported model — {bbox['x']:.0f}×{bbox['y']:.0f}×{bbox['z']:.0f} mm. {fit_msg}",
+        artifact_refs=[ref],
+    )
+    result = get_chat(store, chat_id)
+    assert result is not None
+    return result
+
+
+@app.post("/chats/{chat_id}/slice", response_model=JobRef, tags=["chats"])
+def chat_slice(chat_id: str, body: ChatSliceIn | None = None) -> JobRef:
+    """Slice the chat's current model with a filament's settings, into the chat namespace."""
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    if not chat.current_stl:
+        raise HTTPException(status_code=409, detail="no model to slice — generate or import one first")
+    art_dir = store.artifacts_dir(chat_id)
+    stl = art_dir / chat.current_stl
+    settings = _resolve_filament_settings(chat, body)
+    chat.status = "slicing"
+    save_chat(store, chat)
+    return _slice_stl(stl, art_dir, f"/chats/{chat_id}/artifacts", settings, chat_id=chat_id)
+
+
+# --------------------------------------------------------------------------- #
+# STL import + calibration test prints                                        #
+# --------------------------------------------------------------------------- #
+@app.post("/imports", tags=["imports"])
+async def import_stl(file: Annotated[UploadFile, File()]) -> dict:
+    """Upload + validate an STL (trimesh), store it under ~/.agent-cad/imports/<id>.stl."""
+    import trimesh
+    from cad.printer import fits
+
+    store.imports_dir.mkdir(parents=True, exist_ok=True)
+    import_id = uuid.uuid4().hex[:12]
+    name = Path(file.filename or "import.stl").name
+    dst = store.imports_dir / f"{import_id}.stl"
+    max_bytes = 100 * 1024 * 1024  # 100 MB cap, streamed to disk (no full-payload in RAM)
+    size, too_big = 0, False
+    with dst.open("wb") as out:
+        while chunk := await file.read(1024 * 1024):
+            size += len(chunk)
+            if size > max_bytes:
+                too_big = True
+                break
+            out.write(chunk)
+    if too_big:
+        dst.unlink(missing_ok=True)
+        raise HTTPException(status_code=413, detail="STL too large (max 100 MB)")
+    try:
+        mesh = trimesh.load(dst, force="mesh")
+        ext = [float(v) for v in mesh.extents]
+    except Exception as exc:  # noqa: BLE001 - reject anything trimesh can't load as a mesh
+        dst.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"not a loadable STL mesh: {exc}") from exc
+    if min(ext) <= 0:
+        dst.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="degenerate mesh (zero extent)")
+    fit = fits({"x": ext[0], "y": ext[1], "z": ext[2]})
+    return {
+        "id": import_id,
+        "name": name,
+        "bbox": {"x": round(ext[0], 2), "y": round(ext[1], 2), "z": round(ext[2], 2)},
+        "fits_build_volume": fit.fits,
+        "watertight": bool(mesh.is_watertight),
+    }
+
+
+@app.post("/calibrate", response_model=JobRef, tags=["calibration"])
+def calibrate(body: CalibrateIn) -> JobRef:
+    """Slice a reference object (cube or Benchy) at a filament's settings — the test print."""
+    if body.printer_id:
+        printer = get_printer(store, body.printer_id)
+        if printer is None:
+            raise HTTPException(status_code=404, detail=f"Unknown printer: {body.printer_id}")
+    else:
+        printer = default_printer(store)
+    settings = body.settings
+    if settings is None and printer is not None:
+        if body.filament_id:
+            fil = next((f for f in printer.filaments if f.id == body.filament_id), None)
+            if fil is None:
+                raise HTTPException(status_code=404, detail=f"Unknown filament: {body.filament_id}")
+        else:
+            fil = printer.filaments[0] if printer.filaments else None
+        if fil is not None:
+            settings = fil.settings
+    resolved = settings or SliceSettings()
+    target = body.target
+    if target == "benchy" and not _sample_available(_samples()["benchy"]["stl"]):
+        raise HTTPException(
+            status_code=409, detail="Benchy STL unavailable (unfetched Git-LFS pointer)"
+        )
+    key = f"calibration-{(printer.id if printer else 'default')}-{body.filament_id or 'default'}-{target}"
+    out_dir = BUILDS_DIR / key
+
+    def work() -> dict:
+        import shutil
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        if target == "cube":
+            from cad.runner import build_model
+            from cad.templates import get_template
+
+            built = build_model(
+                model_path=str(get_template("cube").path),
+                out_dir=str(out_dir),
+                name=key,
+                verify=False,
+            ).to_dict()
+            if not built.get("ok"):
+                return {"ok": False, "error": built.get("error") or "cube build failed", "target": target}
+        else:
+            shutil.copyfile(_samples()["benchy"]["stl"], out_dir / f"{key}.stl")
+        result = _run_slice_inline(out_dir / f"{key}.stl", out_dir, f"/artifacts/{key}", resolved)
+        result["target"] = target
+        return result
+
+    job = jobs.submit("calibrate", work)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
 
 
 # --------------------------------------------------------------------------- #
@@ -452,7 +1128,7 @@ def run() -> None:
     """Console-script entry point (`agent-cad-api`)."""
     import uvicorn
 
-    uvicorn.run("api.main:app", host="127.0.0.1", port=8000, reload=False)
+    uvicorn.run("api.main:app", host="127.0.0.1", port=8420, reload=False)
 
 
 __all__ = ["app", "run"]

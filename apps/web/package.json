@@ -5,9 +5,9 @@
   "description": "Next.js + shadcn control panel (shell; built out in the UI pass).",
   "type": "module",
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -p 3420",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -p 3420",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",

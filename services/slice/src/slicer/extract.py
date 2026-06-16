@@ -41,6 +41,35 @@ class PlateInfo:
         raw = self.metadata.get("weight")
         return float(raw) if raw else None
 
+    @property
+    def length_m(self) -> float | None:
+        """Total filament length in metres, summed across the plate's filaments."""
+        total = 0.0
+        found = False
+        for f in self.filaments:
+            raw, divisor = f.get("used_m"), 1.0
+            if not raw:
+                raw, divisor = f.get("used_mm"), 1000.0
+            if raw:
+                try:
+                    total += float(raw) / divisor
+                    found = True
+                except (ValueError, TypeError):
+                    continue  # best-effort: skip non-numeric values
+        return round(total, 3) if found else None
+
+    @property
+    def layer_count(self) -> int | None:
+        """Layer count if slice_info carries it (else None — count the g-code instead)."""
+        for key in ("layer_num", "total_layer_count", "layers", "layer_number"):
+            raw = self.metadata.get(key)
+            if raw:
+                try:
+                    return int(float(raw))
+                except ValueError:
+                    continue
+        return None
+
 
 def list_plate_gcode(archive: str | Path) -> dict[int, str]:
     """Map plate index -> archive member name for every ``plate_N.gcode``."""
@@ -121,6 +150,32 @@ def read_slice_info(archive: str | Path) -> list[PlateInfo]:
     return plates
 
 
+_LAYER_CHANGE_RE = re.compile(r"^;\s*LAYER_CHANGE\b", re.MULTILINE)
+_LAYER_TOTAL_RE = re.compile(
+    r";\s*(?:total[ _]layer(?:[ _](?:number|count))?)\s*[:=]\s*(\d+)", re.IGNORECASE
+)
+
+
+def count_gcode_layers(gcode_path: str | Path) -> int | None:
+    """Count print layers in a plain ``.gcode`` file (OrcaSlicer markers, best-effort).
+
+    Prefers an explicit ``; total layer number: N`` header; falls back to counting
+    ``;LAYER_CHANGE`` markers. Streams line-by-line so a large g-code file isn't read
+    wholesale into memory. Returns None when neither is present.
+    """
+    try:
+        n = 0
+        with Path(gcode_path).open("r", errors="ignore") as fh:
+            for line in fh:
+                if m := _LAYER_TOTAL_RE.search(line):
+                    return int(m.group(1))
+                if _LAYER_CHANGE_RE.match(line):
+                    n += 1
+        return n or None
+    except OSError:
+        return None
+
+
 def summarize(archive: str | Path) -> dict[str, Any]:
     """Compact, UI-friendly summary of an archive's plates."""
     plates = read_slice_info(archive)
@@ -131,6 +186,8 @@ def summarize(archive: str | Path) -> dict[str, Any]:
                 "index": pl.index,
                 "print_time_s": pl.print_time_s,
                 "weight_g": pl.weight_g,
+                "length_m": pl.length_m,
+                "layer_count": pl.layer_count,
                 "filaments": pl.filaments,
                 "metadata": pl.metadata,
             }

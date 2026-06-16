@@ -6,7 +6,7 @@ generated OpenAPI spec — keep field names in sync with the frontend.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -37,8 +37,8 @@ class SliceSettings(BaseModel):
     wall_loops: int | None = Field(default=None, ge=1, le=10)
     top_layers: int | None = Field(default=None, ge=0, le=20)
     bottom_layers: int | None = Field(default=None, ge=0, le=20)
-    infill_pattern: str | None = None
-    seam_position: str | None = None
+    infill_pattern: Literal["crosshatch", "gyroid", "grid", "cubic"] | None = None
+    seam_position: Literal["aligned", "nearest", "back", "random"] | None = None
     brim_width: float | None = Field(default=None, ge=0, le=20)
     support: bool | None = None
     support_threshold: int | None = Field(default=None, ge=0, le=90)
@@ -46,6 +46,177 @@ class SliceSettings(BaseModel):
     raw: dict[str, str] | None = Field(
         default=None, description="Advanced: arbitrary OrcaSlicer key→value overrides."
     )
+
+
+class BuildVolume(BaseModel):
+    """Print envelope in millimetres (mirrors ``cad.printer.BuildVolume``)."""
+
+    x: float = Field(..., gt=0)
+    y: float = Field(..., gt=0)
+    z: float = Field(..., gt=0)
+
+
+class FilamentProfile(BaseModel):
+    """A material profile saved on a printer.
+
+    ``settings`` are the saved per-filament slice values (the ``SliceSettings`` shape,
+    so they map 1:1 onto ``slice_overrides()``); ``default_settings`` is the baseline
+    the "Original" toggle compares/reverts to.
+    """
+
+    id: str
+    name: str
+    material: str  # PLA | PETG | ASA | ABS | TPU …
+    brand: str | None = None
+    color: str | None = None
+    settings: SliceSettings = Field(default_factory=SliceSettings)
+    default_settings: SliceSettings = Field(default_factory=SliceSettings)
+
+
+class Printer(BaseModel):
+    """A registered machine + its filament profiles (the net-new registry record).
+
+    Replaces the hardcoded ``ENDER_5_S1`` constant. ``nozzle_diameter_mm`` and
+    ``firmware`` are net-new display/registry fields the frozen constant lacks.
+    """
+
+    id: str
+    name: str
+    kind: str = "FDM"
+    build_volume: BuildVolume
+    nozzle_diameter_mm: float = Field(default=0.4, gt=0)
+    firmware: str = "Marlin"  # editable display metadata; not load-bearing for slicing
+    bed_margin_mm: float = Field(default=5.0, ge=0)
+    default: bool = False
+    filaments: list[FilamentProfile] = Field(default_factory=list)
+
+
+class Settings(BaseModel):
+    """App settings persisted to ``~/.agent-cad/settings.json``.
+
+    No ``effort`` knob — generation runs at MAX effort (locked decision);
+    ``active_model`` is the Anthropic model id.
+    """
+
+    active_model: str = "claude-opus-4-8"
+    default_printer_id: str | None = None
+    storage_location: str | None = None
+    theme: str = "system"
+    auto_clear_days: int = Field(default=0, ge=0)
+    user_name: str | None = None
+
+
+class SettingsField(BaseModel):
+    """One control in the schema-driven settings UI (§3a).
+
+    ``key`` is the real ``SliceSettings`` field name (the contract); ``label`` is
+    cosmetic. ``min``/``max``/``options`` are DERIVED from ``SliceSettings``; ``step`` is
+    a presentation hint. ``scope`` is the profile bucket (routing); ``binding`` is which
+    screen renders it (not the same as scope).
+    """
+
+    key: str
+    label: str
+    help: str | None = None
+    input_type: Literal["slider", "number", "percent", "select", "toggle", "text"]
+    scope: Literal["process", "machine", "filament", "raw"]
+    binding: Literal["per-slice", "per-filament", "per-printer"]
+    group: str
+    unit: str | None = None
+    default: Any | None = None
+    min: float | None = None
+    max: float | None = None
+    step: float | None = None
+    options: list[str] | None = None
+    advanced: bool = False
+    depends_on: dict[str, Any] | None = None  # e.g. {"field": "support", "equals": true}
+
+
+class SettingsGroup(BaseModel):
+    id: str
+    label: str
+    default_expanded: bool = True
+
+
+class SettingsDescriptor(BaseModel):
+    """Per printer (+ filament) descriptor the UI iterates to render settings controls."""
+
+    printer_id: str
+    printer_name: str
+    filament_id: str | None = None
+    schema_version: int = 1
+    groups: list[SettingsGroup]
+    fields: list[SettingsField]
+
+
+class ArtifactRef(BaseModel):
+    """An artifact attached to a chat turn (lives in chats/<id>/artifacts/)."""
+
+    kind: str  # generated | template | sample | import | gcode
+    name: str  # filename in the chat's artifacts dir
+    url: str   # /chats/<id>/artifacts/<name>
+    fmt: str | None = None  # stl | gcode | step | 3mf | svg
+    bbox: dict[str, float] | None = None
+    fits_build_volume: bool | None = None
+    slice_info: dict[str, Any] | None = None
+
+
+class Message(BaseModel):
+    role: str  # user | assistant | system
+    content: str
+    ts: float = 0.0
+    quick_replies: list[str] | None = None
+    artifact_refs: list[ArtifactRef] = Field(default_factory=list)
+
+
+class Chat(BaseModel):
+    id: str
+    title: str
+    created_at: float
+    updated_at: float
+    status: str = "new"  # new | generating | model-ready | slicing | ready-to-print
+    printer_id: str | None = None
+    filament_id: str | None = None
+    current_stl: str | None = None  # filename of the slice target in artifacts/
+    messages: list[Message] = Field(default_factory=list)
+
+
+class ChatCreate(BaseModel):
+    title: str | None = None
+    prompt: str | None = None  # optional first user message
+
+
+class ChatMessageIn(BaseModel):
+    role: str = "user"
+    content: str = Field(..., min_length=1)
+
+
+class ChatGenerateIn(BaseModel):
+    prompt: str = Field(..., min_length=3)
+
+
+class ChatSliceIn(BaseModel):
+    filament_id: str | None = None
+    settings: SliceSettings | None = None
+
+
+class ResetIn(BaseModel):
+    confirm: bool = False
+
+
+class ChatInterviewIn(BaseModel):
+    prompt: str = Field(..., min_length=1)
+
+
+class ChatRefineIn(BaseModel):
+    instruction: str = Field(..., min_length=1)
+
+
+class CalibrateIn(BaseModel):
+    target: Literal["cube", "benchy"]
+    printer_id: str | None = None
+    filament_id: str | None = None
+    settings: SliceSettings | None = None
 
 
 class GenerateRequest(BaseModel):
