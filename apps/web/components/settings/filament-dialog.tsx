@@ -20,16 +20,20 @@ import {
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "filament";
 
+/** Sensible starting slice values per material — the editor refines from here. */
+const PLA_DEFAULTS: SliceSettings = { nozzle_temp: 210, bed_temp: 60, wall_speed: 25, flow: 0.95 };
+const MATERIAL_DEFAULTS: Record<string, SliceSettings> = {
+  PLA: PLA_DEFAULTS,
+  PETG: { nozzle_temp: 240, bed_temp: 80, wall_speed: 30, flow: 0.95 },
+  ABS: { nozzle_temp: 245, bed_temp: 100, wall_speed: 30, flow: 0.95 },
+  ASA: { nozzle_temp: 245, bed_temp: 100, wall_speed: 30, flow: 0.95 },
+  TPU: { nozzle_temp: 220, bed_temp: 50, wall_speed: 20, flow: 1.0 },
+};
+const materialDefaults = (material: string): SliceSettings =>
+  MATERIAL_DEFAULTS[material.toUpperCase().replace(/[^A-Z]/g, "")] ?? PLA_DEFAULTS;
+
 function blankFilament(): FilamentProfile {
-  return {
-    id: "",
-    name: "",
-    material: "PLA",
-    brand: "",
-    color: "",
-    settings: { nozzle_temp: 210, bed_temp: 60, wall_speed: 25, flow: 0.95 },
-    default_settings: { nozzle_temp: 210, bed_temp: 60, wall_speed: 25, flow: 0.95 },
-  };
+  return { id: "", name: "", material: "PLA", brand: "", color: "", settings: {}, default_settings: {} };
 }
 
 export interface FilamentDialogProps {
@@ -42,8 +46,10 @@ export interface FilamentDialogProps {
 }
 
 /**
- * Create / edit a filament's identity + the headline slice values (FR-PD-1). The
- * full descriptor-driven SliceSettings editor (the Calibration screen) is SCR-022.
+ * Create / rename a filament's **identity** only (name, material, brand, colour).
+ * The full slice profile — every setting + the test prints — lives on the
+ * Filament·Calibration editor; this dialog never touches `settings` on edit, so
+ * a quick rename can't wipe a tuned profile.
  */
 export function FilamentDialog({ mode, printerId, filament, trigger, onSaved }: FilamentDialogProps) {
   const [open, setOpen] = React.useState(false);
@@ -54,34 +60,37 @@ export function FilamentDialog({ mode, printerId, filament, trigger, onSaved }: 
   function onOpenChange(next: boolean) {
     if (busy) return;
     if (next) {
-      // Re-seed the form each time the dialog opens.
       setForm(filament ?? blankFilament());
       setError(null);
     }
     setOpen(next);
   }
 
-  const valid = form.name.trim().length > 0;
-  const s = (form.settings ?? {}) as SliceSettings;
-
-  const setSetting = (key: keyof SliceSettings, v: number) =>
-    setForm((f) => ({ ...f, settings: { ...f.settings, [key]: v } }));
+  const valid = form.name.trim().length > 0 && form.material.trim().length > 0;
+  const set = (patch: Partial<FilamentProfile>) => setForm((f) => ({ ...f, ...patch }));
 
   async function save() {
     if (!valid) return;
     setBusy(true);
     setError(null);
     try {
-      const body: FilamentProfile = {
-        ...form,
-        id: form.id || slug(form.name),
-        // First save establishes the committed baseline used by the "Original" toggle (§3.8).
-        default_settings: mode === "create" ? form.settings : form.default_settings,
-      };
-      if (mode === "create") await api.createFilament(printerId, body);
-      else await api.updateFilament(printerId, body.id, body);
-      setOpen(false);
-      onSaved(body.id);
+      if (mode === "create") {
+        const seeded = materialDefaults(form.material);
+        const body: FilamentProfile = {
+          ...form,
+          id: form.id || slug(form.name),
+          settings: seeded,
+          default_settings: seeded, // the committed baseline / "Original"
+        };
+        await api.createFilament(printerId, body);
+        setOpen(false);
+        onSaved(body.id);
+      } else {
+        // Identity-only edit: keep the existing settings + default_settings untouched.
+        await api.updateFilament(printerId, form.id, form);
+        setOpen(false);
+        onSaved(form.id);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -89,67 +98,34 @@ export function FilamentDialog({ mode, printerId, filament, trigger, onSaved }: 
     }
   }
 
-  const set = (patch: Partial<FilamentProfile>) => setForm((f) => ({ ...f, ...patch }));
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{mode === "create" ? "Add filament" : "Edit filament"}</DialogTitle>
-          <DialogDescription>Headline values; tune the full profile from the calibration editor.</DialogDescription>
+          <DialogTitle>{mode === "create" ? "New filament profile" : "Edit details"}</DialogTitle>
+          <DialogDescription>
+            {mode === "create"
+              ? "Name it and pick a material — you'll set the full slice profile next."
+              : "Rename or recolour. Slice settings live on the calibration editor."}
+          </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Name">
-              <Input value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="PLA" />
-            </Field>
-            <Field label="Material">
-              <Input value={form.material} onChange={(e) => set({ material: e.target.value })} />
-            </Field>
-            <Field label="Brand">
-              <Input value={form.brand ?? ""} onChange={(e) => set({ brand: e.target.value })} />
-            </Field>
-            <Field label="Color">
-              <Input value={form.color ?? ""} onChange={(e) => set({ color: e.target.value })} />
-            </Field>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 border-t pt-3">
-            <Field label="Nozzle temp (°C)">
-              <Input
-                type="number"
-                value={s.nozzle_temp ?? 210}
-                onChange={(e) => setSetting("nozzle_temp", Number(e.target.value))}
-              />
-            </Field>
-            <Field label="Bed temp (°C)">
-              <Input
-                type="number"
-                value={s.bed_temp ?? 60}
-                onChange={(e) => setSetting("bed_temp", Number(e.target.value))}
-              />
-            </Field>
-            <Field label="Print speed (mm/s)">
-              <Input
-                type="number"
-                value={s.wall_speed ?? 25}
-                onChange={(e) => setSetting("wall_speed", Number(e.target.value))}
-              />
-            </Field>
-            <Field label="Flow (×)">
-              <Input
-                type="number"
-                step={0.01}
-                value={s.flow ?? 0.95}
-                onChange={(e) => setSetting("flow", Number(e.target.value))}
-              />
-            </Field>
-          </div>
-
-          {error ? <p className="text-sm text-danger">{error}</p> : null}
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Name">
+            <Input value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="Generic PLA" autoFocus />
+          </Field>
+          <Field label="Material">
+            <Input value={form.material} onChange={(e) => set({ material: e.target.value })} placeholder="PLA" />
+          </Field>
+          <Field label="Brand">
+            <Input value={form.brand ?? ""} onChange={(e) => set({ brand: e.target.value })} placeholder="Optional" />
+          </Field>
+          <Field label="Color">
+            <Input value={form.color ?? ""} onChange={(e) => set({ color: e.target.value })} placeholder="Optional" />
+          </Field>
         </div>
+        {error ? <p className="text-sm text-danger">{error}</p> : null}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
@@ -157,7 +133,7 @@ export function FilamentDialog({ mode, printerId, filament, trigger, onSaved }: 
           </Button>
           <Button onClick={save} disabled={!valid || busy}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {mode === "create" ? "Add filament" : "Save changes"}
+            {mode === "create" ? "Create & edit" : "Save details"}
           </Button>
         </DialogFooter>
       </DialogContent>

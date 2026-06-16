@@ -192,17 +192,6 @@ function FilamentRow({
           <Spec icon={Gauge} value={s.wall_speed != null ? `${s.wall_speed} mm/s` : "—"} label="Speed" />
         </div>
       </Link>
-      <FilamentDialog
-        mode="edit"
-        printerId={printerId}
-        filament={filament}
-        onSaved={onChanged}
-        trigger={
-          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" aria-label="Edit identity">
-            <Pencil className="h-4 w-4" />
-          </Button>
-        }
-      />
       <ConfirmDialog
         trigger={
           <Button

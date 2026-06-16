@@ -8,7 +8,10 @@ from api.jobs import JobStatus, JobStore
 from api.store import Store
 
 
-def _wait_done(js: JobStore, job_id: str, timeout: float = 5.0):
+def _wait_done(js: JobStore, job_id: str, timeout: float = 30.0):
+    # Generous timeout: these jobs finish in milliseconds, but the full suite can run
+    # real OrcaSlicer slices that load the box and delay the worker thread — a tight
+    # timeout would flake under that load without indicating any real failure.
     deadline = time.time() + timeout
     while time.time() < deadline:
         job = js.get(job_id)

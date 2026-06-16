@@ -4,7 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { FilamentProfile, Printer, SettingsDescriptor } from "@agent-cad/types";
-import { ChevronRight, Box, Ship, Info, Loader2, ArrowRight } from "lucide-react";
+import { ChevronRight, Box, Ship, Info, Loader2, ArrowRight, Pencil } from "lucide-react";
 
 import * as api from "@/lib/api";
 import { buildSliceSettings, isDirty, sameSettings } from "@/lib/chat";
@@ -13,6 +13,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SettingsForm, type SettingsValues } from "@/components/settings/settings-form";
 import { CalibContextHeader } from "@/components/settings/calib-context-header";
+import { FilamentDialog } from "@/components/settings/filament-dialog";
 
 /**
  * Filament · Calibration editor (design: "Settings · Filament · Calibration").
@@ -110,7 +111,21 @@ export default function FilamentCalibrationPage() {
 
   return (
     <div className="space-y-6">
-      <Breadcrumb printerId={printerId} printerName={printer.name} filamentName={`${filament.material}${filament.color ? ` · ${filament.color}` : ""}`} />
+      <div className="flex items-center justify-between gap-3">
+        <Breadcrumb printerId={printerId} printerName={printer.name} filamentName={`${filament.material}${filament.color ? ` · ${filament.color}` : ""}`} />
+        <FilamentDialog
+          mode="edit"
+          printerId={printerId}
+          filament={filament}
+          onSaved={() => void load()}
+          trigger={
+            <Button variant="ghost" size="sm" className="shrink-0 gap-2 text-muted-foreground">
+              <Pencil className="h-4 w-4" />
+              Edit details
+            </Button>
+          }
+        />
+      </div>
       <CalibContextHeader printer={printer} filament={filament} isOriginal={isOriginal} onResetOriginal={resetToOriginal} />
 
       {note ? <p className="text-sm text-success">{note}</p> : null}
