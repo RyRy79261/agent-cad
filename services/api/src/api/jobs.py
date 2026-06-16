@@ -89,7 +89,9 @@ class JobStore:
     def __init__(self, max_workers: int = 2, store: Store | None = None) -> None:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+        self._max_workers = max_workers
         self._pool = ThreadPoolExecutor(max_workers=max_workers)
+        self._closed = False
         self._store = store
         if store is not None:
             self._recover()
@@ -134,6 +136,9 @@ class JobStore:
     ) -> Job:
         job = Job(id=uuid.uuid4().hex, kind=kind, chat_id=chat_id)
         with self._lock:
+            if self._closed:  # revive after a prior shutdown (e.g. a restarted lifespan)
+                self._pool = ThreadPoolExecutor(max_workers=self._max_workers)
+                self._closed = False
             self._jobs[job.id] = job
             self._persist_locked()
         self._pool.submit(self._run, job, fn, args, kwargs)
@@ -183,3 +188,4 @@ class JobStore:
 
     def shutdown(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
+        self._closed = True

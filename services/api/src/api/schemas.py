@@ -204,6 +204,21 @@ class ResetIn(BaseModel):
     confirm: bool = False
 
 
+class ChatInterviewIn(BaseModel):
+    prompt: str = Field(..., min_length=1)
+
+
+class ChatRefineIn(BaseModel):
+    instruction: str = Field(..., min_length=1)
+
+
+class CalibrateIn(BaseModel):
+    target: Literal["cube", "benchy"]
+    printer_id: str | None = None
+    filament_id: str | None = None
+    settings: SliceSettings | None = None
+
+
 class GenerateRequest(BaseModel):
     """Free-text → generated build123d part."""
 

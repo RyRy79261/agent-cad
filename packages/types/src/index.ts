@@ -284,6 +284,34 @@ export const Chat = z.object({
 });
 export type Chat = z.infer<typeof Chat>;
 
+// --- Imports + interview + calibration ------------------------------------- //
+
+export const ImportResult = z.object({
+  id: z.string(),
+  name: z.string(),
+  bbox: z.object({ x: z.number(), y: z.number(), z: z.number() }),
+  fits_build_volume: z.boolean(),
+  watertight: z.boolean(),
+});
+export type ImportResult = z.infer<typeof ImportResult>;
+
+export const InterviewResult = z.object({
+  ok: z.boolean(),
+  ready: z.boolean(),
+  question: z.string().nullish(),
+  suggestions: z.array(z.string()).nullish(),
+  resolved_prompt: z.string().nullish(),
+});
+export type InterviewResult = z.infer<typeof InterviewResult>;
+
+export const CalibrateRequest = z.object({
+  target: z.enum(["cube", "benchy"]),
+  printer_id: z.string().nullish(),
+  filament_id: z.string().nullish(),
+  settings: SliceSettings.nullish(),
+});
+export type CalibrateRequest = z.infer<typeof CalibrateRequest>;
+
 /** Default local API base URL (the FastAPI server in `services/api`). */
 export const DEFAULT_API_URL = "http://127.0.0.1:8420";
 

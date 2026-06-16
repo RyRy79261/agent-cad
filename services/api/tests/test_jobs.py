@@ -78,6 +78,18 @@ def test_chat_id_and_phase_persist(tmp_path):
     js.shutdown()
 
 
+def test_pool_revives_after_shutdown(tmp_path):
+    # A restarted lifespan calls shutdown(); a later submit must revive, not raise
+    # "cannot schedule new futures after shutdown".
+    s = Store(tmp_path)
+    js = JobStore(store=s)
+    _wait_done(js, js.submit("x", lambda: {"ok": True}).id)
+    js.shutdown()
+    job = js.submit("y", lambda: {"ok": True})
+    assert _wait_done(js, job.id).status is JobStatus.SUCCEEDED
+    js.shutdown()
+
+
 def test_in_memory_store_without_persistence(tmp_path):
     js = JobStore()  # store=None -> pure in-memory, no jobs.json written
     job = js.submit("x", lambda: {"ok": True})

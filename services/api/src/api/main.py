@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -53,10 +54,13 @@ from api.registry import (
 from api.schemas import (
     ArtifactRef,
     BuildRequest,
+    CalibrateIn,
     Chat,
     ChatCreate,
     ChatGenerateIn,
+    ChatInterviewIn,
     ChatMessageIn,
+    ChatRefineIn,
     ChatSliceIn,
     ExtractRequest,
     FilamentProfile,
@@ -361,55 +365,66 @@ def _slice_stl(
     """
     if not stl.exists():
         raise HTTPException(status_code=409, detail=f"no STL to slice at {stl}")
-    settings = settings or SliceSettings()
-    typed = settings.model_dump(exclude={"raw"}, exclude_none=True)
-    raw = settings.raw or {}
-    archive = out_dir / f"{stl.stem}.gcode.3mf"
+    resolved = settings or SliceSettings()
 
     def work() -> dict:
-        from slicer import orca
-        from slicer.extract import count_gcode_layers
-        from slicer.profiles import (
-            ender5s1_profiles,
-            merge_overrides,
-            profile_with_overrides,
-            route_raw_overrides,
-            slice_overrides,
-        )
-
-        profiles = ender5s1_profiles()
-        paths = dict(profiles)  # machine / process / filament -> Path
-        raw_overrides, warnings = route_raw_overrides(raw)
-        merged = merge_overrides(slice_overrides(**typed), raw_overrides)  # raw wins
-        for kind, override in merged.items():
-            paths[kind] = profile_with_overrides(
-                override, out_dir / f"_{kind}_override.json", base=profiles[kind]
-            )
-        result = orca.slice_model(
-            stl,
-            machine=paths["machine"],
-            process=paths["process"],
-            filaments=[paths["filament"]],
-            output=archive,
-            extract=True,
-        ).to_dict()
-        result["settings"] = typed
-        result["raw_overrides"] = raw
-        result["override_warnings"] = warnings
-        gpath = result.get("gcode_path")
-        if result.get("ok") and gpath:
-            result["gcode_url"] = f"{url_prefix}/{Path(gpath).name}"
-            layers = count_gcode_layers(gpath)
-            if layers is not None:
-                for plate in (result.get("info") or {}).get("plates", []):
-                    if plate.get("layer_count") is None:
-                        plate["layer_count"] = layers
+        result = _run_slice_inline(stl, out_dir, url_prefix, resolved)
         if chat_id is not None:
-            _update_chat_after_slice(chat_id, result, gpath)
+            _update_chat_after_slice(chat_id, result, result.get("gcode_path"))
         return result
 
     job = jobs.submit("slice.ender5s1", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+def _run_slice_inline(stl: Path, out_dir: Path, url_prefix: str, settings: SliceSettings) -> dict:
+    """The slice computation itself (no job, no chat side-effects) — returns the result dict.
+
+    Reused by the job-based slice routes (:func:`_slice_stl`) and by ``/calibrate`` (which
+    builds/stages a reference object then slices it in one job). Adds ``gcode_url`` under
+    ``url_prefix`` and fills ``layer_count`` from the extracted g-code (API-5).
+    """
+    from slicer import orca
+    from slicer.extract import count_gcode_layers
+    from slicer.profiles import (
+        ender5s1_profiles,
+        merge_overrides,
+        profile_with_overrides,
+        route_raw_overrides,
+        slice_overrides,
+    )
+
+    typed = settings.model_dump(exclude={"raw"}, exclude_none=True)
+    raw = settings.raw or {}
+    archive = out_dir / f"{stl.stem}.gcode.3mf"
+    profiles = ender5s1_profiles()
+    paths = dict(profiles)  # machine / process / filament -> Path
+    raw_overrides, warnings = route_raw_overrides(raw)
+    merged = merge_overrides(slice_overrides(**typed), raw_overrides)  # raw wins
+    for kind, override in merged.items():
+        paths[kind] = profile_with_overrides(
+            override, out_dir / f"_{kind}_override.json", base=profiles[kind]
+        )
+    result = orca.slice_model(
+        stl,
+        machine=paths["machine"],
+        process=paths["process"],
+        filaments=[paths["filament"]],
+        output=archive,
+        extract=True,
+    ).to_dict()
+    result["settings"] = typed
+    result["raw_overrides"] = raw
+    result["override_warnings"] = warnings
+    gpath = result.get("gcode_path")
+    if result.get("ok") and gpath:
+        result["gcode_url"] = f"{url_prefix}/{Path(gpath).name}"
+        layers = count_gcode_layers(gpath)
+        if layers is not None:
+            for plate in (result.get("info") or {}).get("plates", []):
+                if plate.get("layer_count") is None:
+                    plate["layer_count"] = layers
+    return result
 
 
 def _submit_slice(name: str, settings: SliceSettings | None = None) -> JobRef:
@@ -568,6 +583,33 @@ def _resolve_filament_settings(chat: Chat, body: ChatSliceIn | None) -> SliceSet
     return SliceSettings()
 
 
+def _attach_build_to_chat(chat_id: str, result_obj: object) -> dict:
+    """Record a generate/refine build's artifacts on the chat + post a narration turn."""
+    payload = result_obj.to_dict()  # type: ignore[attr-defined]
+    build = getattr(result_obj, "build", None) or {}
+    artifacts = (build.get("artifacts") or {}) if build else {}
+    refs: list[ArtifactRef] = []
+    stl_name: str | None = None
+    for fmt, path in artifacts.items():
+        fname = Path(path).name
+        refs.append(
+            ArtifactRef(kind="generated", name=fname, fmt=fmt, url=f"/chats/{chat_id}/artifacts/{fname}")
+        )
+        if fmt == "stl":
+            stl_name = fname
+    payload["artifact_urls"] = {
+        fmt: f"/chats/{chat_id}/artifacts/{Path(p).name}" for fmt, p in artifacts.items()
+    }
+    c = get_chat(store, chat_id)
+    if c is not None:
+        if stl_name:
+            c.current_stl = stl_name
+        c.status = "model-ready" if payload.get("ok") else "new"
+        save_chat(store, c)
+        append_message(store, chat_id, "assistant", _narrate_build(payload), artifact_refs=refs)
+    return payload
+
+
 @app.get("/chats", response_model=list[Chat], tags=["chats"])
 def list_chats_ep() -> list[Chat]:
     return list_chats(store)
@@ -641,37 +683,138 @@ def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
             name="model",
             out_dir=str(art_dir),
         )
-        payload = result.to_dict()
-        build = result.build or {}
-        artifacts = (build.get("artifacts") or {}) if build else {}
-        refs: list[ArtifactRef] = []
-        stl_name: str | None = None
-        for fmt, path in artifacts.items():
-            fname = Path(path).name
-            refs.append(
-                ArtifactRef(
-                    kind="generated",
-                    name=fname,
-                    fmt=fmt,
-                    url=f"/chats/{chat_id}/artifacts/{fname}",
-                )
-            )
-            if fmt == "stl":
-                stl_name = fname
-        payload["artifact_urls"] = {
-            fmt: f"/chats/{chat_id}/artifacts/{Path(p).name}" for fmt, p in artifacts.items()
-        }
-        c = get_chat(store, chat_id)
-        if c is not None:
-            if stl_name:
-                c.current_stl = stl_name
-            c.status = "model-ready" if payload.get("ok") else "new"
-            save_chat(store, c)
-            append_message(store, chat_id, "assistant", _narrate_build(payload), artifact_refs=refs)
-        return payload
+        return _attach_build_to_chat(chat_id, result)
 
     job = jobs.submit("cad.generate", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+@app.post("/chats/{chat_id}/interview", response_model=JobRef, tags=["chats"])
+def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
+    """Clarify-before-generate: one LLM turn that asks a question or signals ready (cap 6)."""
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    append_message(store, chat_id, "user", body.prompt)
+    chat = get_chat(store, chat_id)
+    assert chat is not None
+    rounds = sum(1 for m in chat.messages if m.role == "assistant" and m.quick_replies is not None)
+    brief = "\n".join(m.content for m in chat.messages if m.role == "user")
+
+    def work() -> dict:
+        from api.interview import interview_turn
+
+        result = interview_turn(brief, driver="anthropic")
+        ready = result.get("status") != "question" or rounds >= 6  # cap at 6 questions
+        c = get_chat(store, chat_id)
+        if c is not None:
+            if not ready:
+                append_message(
+                    store, chat_id, "assistant", result["question"],
+                    quick_replies=result.get("suggestions") or [],
+                )
+                c2 = get_chat(store, chat_id)
+                if c2 is not None:
+                    c2.status = "interviewing"
+                    save_chat(store, c2)
+            else:
+                c.status = "interviewed"
+                save_chat(store, c)
+        return {
+            "ok": True,
+            "ready": ready,
+            "question": result.get("question") if not ready else None,
+            "suggestions": result.get("suggestions") if not ready else None,
+            "resolved_prompt": brief if ready else None,
+        }
+
+    job = jobs.submit("chat.interview", work, chat_id=chat_id)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+@app.post("/chats/{chat_id}/refine", response_model=JobRef, tags=["chats"])
+def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
+    """Refine the chat's current model by editing its model.py (prior versions kept)."""
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    art_dir = store.artifacts_dir(chat_id)
+    if not (art_dir / "model.py").exists():
+        raise HTTPException(status_code=409, detail="nothing to refine — generate a model first")
+    append_message(store, chat_id, "user", body.instruction)
+    chat = get_chat(store, chat_id)
+    assert chat is not None
+    chat.status = "generating"
+    save_chat(store, chat)
+    instruction = body.instruction
+
+    def work() -> dict:
+        import shutil
+
+        from cad.generate import generate_part
+
+        prior_py = art_dir / "model.py"
+        # Keep every version: snapshot the prior source before overwriting (refine v<N>).
+        hist = art_dir / "history"
+        hist.mkdir(exist_ok=True)
+        n = len(list(hist.glob("model.v*.py"))) + 1
+        shutil.copyfile(prior_py, hist / f"model.v{n}.py")
+        prior = prior_py.read_text(encoding="utf-8")
+        augmented = (
+            "Refine an EXISTING build123d part. Here is the current `model.py`:\n\n"
+            f"```python\n{prior.strip()}\n```\n\n"
+            "Apply this change, keeping everything else intact and still parametric:\n\n"
+            f"{instruction.strip()}\n\n"
+            "Return the COMPLETE updated model.py (edit, do not start over)."
+        )
+        result = generate_part(
+            augmented, art_dir, driver="anthropic", max_rounds=2,
+            verify=True, name="model", out_dir=str(art_dir),
+        )
+        return _attach_build_to_chat(chat_id, result)
+
+    job = jobs.submit("cad.refine", work, chat_id=chat_id)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+@app.post("/chats/{chat_id}/imports/{import_id}/attach", response_model=Chat, tags=["chats"])
+def attach_import(chat_id: str, import_id: str) -> Chat:
+    """Attach a previously-uploaded STL into a chat as its current model."""
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    src = store.imports_dir / f"{import_id}.stl"
+    if not src.exists():
+        raise HTTPException(status_code=404, detail=f"unknown import: {import_id}")
+    import shutil
+
+    import trimesh
+    from cad.printer import fits
+
+    art_dir = store.artifacts_dir(chat_id)
+    art_dir.mkdir(parents=True, exist_ok=True)
+    dst = art_dir / "model.stl"
+    shutil.copyfile(src, dst)
+    mesh = trimesh.load(dst, force="mesh")
+    ext = [float(v) for v in mesh.extents]
+    fit = fits({"x": ext[0], "y": ext[1], "z": ext[2]})
+    bbox = {"x": round(ext[0], 2), "y": round(ext[1], 2), "z": round(ext[2], 2)}
+    chat.current_stl = "model.stl"
+    chat.status = "model-ready"
+    save_chat(store, chat)
+    fit_msg = "Fits the bed." if fit.fits else "⚠ Doesn't fit the bed as-is."
+    ref = ArtifactRef(
+        kind="import", name="model.stl", fmt="stl",
+        url=f"/chats/{chat_id}/artifacts/model.stl", bbox=bbox, fits_build_volume=fit.fits,
+    )
+    append_message(
+        store, chat_id, "assistant",
+        f"Imported model — {bbox['x']:.0f}×{bbox['y']:.0f}×{bbox['z']:.0f} mm. {fit_msg}",
+        artifact_refs=[ref],
+    )
+    result = get_chat(store, chat_id)
+    assert result is not None
+    return result
 
 
 @app.post("/chats/{chat_id}/slice", response_model=JobRef, tags=["chats"])
@@ -688,6 +831,87 @@ def chat_slice(chat_id: str, body: ChatSliceIn | None = None) -> JobRef:
     chat.status = "slicing"
     save_chat(store, chat)
     return _slice_stl(stl, art_dir, f"/chats/{chat_id}/artifacts", settings, chat_id=chat_id)
+
+
+# --------------------------------------------------------------------------- #
+# STL import + calibration test prints                                        #
+# --------------------------------------------------------------------------- #
+@app.post("/imports", tags=["imports"])
+async def import_stl(file: UploadFile = File(...)) -> dict:
+    """Upload + validate an STL (trimesh), store it under ~/.agent-cad/imports/<id>.stl."""
+    import trimesh
+    from cad.printer import fits
+
+    store.imports_dir.mkdir(parents=True, exist_ok=True)
+    import_id = uuid.uuid4().hex[:12]
+    name = Path(file.filename or "import.stl").name
+    dst = store.imports_dir / f"{import_id}.stl"
+    dst.write_bytes(await file.read())
+    try:
+        mesh = trimesh.load(dst, force="mesh")
+        ext = [float(v) for v in mesh.extents]
+    except Exception as exc:  # noqa: BLE001 - reject anything trimesh can't load as a mesh
+        dst.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail=f"not a loadable STL mesh: {exc}") from exc
+    if min(ext) <= 0:
+        dst.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="degenerate mesh (zero extent)")
+    fit = fits({"x": ext[0], "y": ext[1], "z": ext[2]})
+    return {
+        "id": import_id,
+        "name": name,
+        "bbox": {"x": round(ext[0], 2), "y": round(ext[1], 2), "z": round(ext[2], 2)},
+        "fits_build_volume": fit.fits,
+        "watertight": bool(mesh.is_watertight),
+    }
+
+
+@app.post("/calibrate", response_model=JobRef, tags=["calibration"])
+def calibrate(body: CalibrateIn) -> JobRef:
+    """Slice a reference object (cube or Benchy) at a filament's settings — the test print."""
+    printer = get_printer(store, body.printer_id) if body.printer_id else default_printer(store)
+    settings = body.settings
+    if settings is None and printer is not None:
+        fil = None
+        if body.filament_id:
+            fil = next((f for f in printer.filaments if f.id == body.filament_id), None)
+        if fil is None and printer.filaments:
+            fil = printer.filaments[0]
+        if fil is not None:
+            settings = fil.settings
+    resolved = settings or SliceSettings()
+    target = body.target
+    if target == "benchy" and not _sample_available(_samples()["benchy"]["stl"]):
+        raise HTTPException(
+            status_code=409, detail="Benchy STL unavailable (unfetched Git-LFS pointer)"
+        )
+    key = f"calibration-{(printer.id if printer else 'default')}-{body.filament_id or 'default'}-{target}"
+    out_dir = BUILDS_DIR / key
+
+    def work() -> dict:
+        import shutil
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        if target == "cube":
+            from cad.runner import build_model
+            from cad.templates import get_template
+
+            built = build_model(
+                model_path=str(get_template("cube").path),
+                out_dir=str(out_dir),
+                name=key,
+                verify=False,
+            ).to_dict()
+            if not built.get("ok"):
+                return {"ok": False, "error": built.get("error") or "cube build failed", "target": target}
+        else:
+            shutil.copyfile(_samples()["benchy"]["stl"], out_dir / f"{key}.stl")
+        result = _run_slice_inline(out_dir / f"{key}.stl", out_dir, f"/artifacts/{key}", resolved)
+        result["target"] = target
+        return result
+
+    job = jobs.submit("calibrate", work)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
 
 
 # --------------------------------------------------------------------------- #
