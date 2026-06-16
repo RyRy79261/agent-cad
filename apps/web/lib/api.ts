@@ -42,7 +42,11 @@ function jsonInit(method: string, body?: unknown): RequestInit {
   return { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) };
 }
 
-async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit): Promise<T> {
+async function request<S extends z.ZodTypeAny>(
+  path: string,
+  schema: S,
+  init?: RequestInit,
+): Promise<z.infer<S>> {
   const res = await fetch(`${API_URL}${path}`, init);
   if (!res.ok) {
     let detail = res.statusText;
@@ -54,7 +58,7 @@ async function request<T>(path: string, schema: z.ZodType<T>, init?: RequestInit
     }
     throw new ApiError(res.status, detail);
   }
-  return schema.parse(await res.json());
+  return schema.parse(await res.json()) as z.infer<S>;
 }
 
 const Ok = z.object({ ok: z.boolean() });

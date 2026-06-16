@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { BuildVolume } from "@agent-cad/types";
 import { Box, Layers, Maximize2, AlertTriangle, Loader2 } from "lucide-react";
 
@@ -91,13 +91,6 @@ export function ViewerPanel({
   className,
 }: ViewerPanelProps) {
   const [fitKey, setFitKey] = useState(0);
-
-  // Auto-switch to Slice Preview the moment a g-code artifact arrives.
-  useEffect(() => {
-    if (gcodeUrl) onTabChange("slice");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gcodeUrl]);
-
   const showModel = tab === "model";
   const artifactKey = (showModel ? stlUrl : gcodeUrl) ?? "none";
 
