@@ -1,14 +1,15 @@
 "use client";
 
 import * as React from "react";
-import { FolderOpen, MessageSquare, Box, Layers, HardDrive, Loader2 } from "lucide-react";
+import type { Settings } from "@agent-cad/types";
+import { FolderOpen, MessageSquare, Box, Layers, HardDrive } from "lucide-react";
 
 import * as api from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
-import { SettingsSection } from "@/components/settings/section";
 import { ConfirmDialog } from "@/components/settings/confirm-dialog";
 
 type Usage = Awaited<ReturnType<typeof api.storageUsage>>;
@@ -27,9 +28,18 @@ function UsageCard({ icon: Icon, label, value }: { icon: typeof Box; label: stri
   );
 }
 
+function SectionHead({ title, description }: { title: string; description: string }) {
+  return (
+    <div>
+      <h2 className="text-base font-semibold">{title}</h2>
+      <p className="text-sm text-muted-foreground">{description}</p>
+    </div>
+  );
+}
+
 export default function StoragePage() {
   const [usage, setUsage] = React.useState<Usage | null>(null);
-  const [root, setRoot] = React.useState<string | null>(null);
+  const [settings, setSettings] = React.useState<Settings | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -37,7 +47,7 @@ export default function StoragePage() {
     try {
       const [u, s] = await Promise.all([api.storageUsage(), api.getSettings()]);
       setUsage(u);
-      setRoot(s.storage_location ?? "~/.agent-cad");
+      setSettings(s);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -49,46 +59,83 @@ export default function StoragePage() {
     })();
   }, [load]);
 
+  const root = settings?.storage_location ?? "~/.agent-cad";
+  const autoClear = (settings?.auto_clear_days ?? 0) > 0;
+
+  async function openFolder() {
+    try {
+      const r = await api.revealStorage();
+      setNote(r.ok ? "Opened the storage folder." : `Folder: ${r.path}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function toggleAutoClear(on: boolean) {
+    if (!settings) return;
+    try {
+      const next = await api.updateSettings({ ...settings, auto_clear_days: on ? 30 : 0 });
+      setSettings(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   return (
-    <SettingsSection title="Storage & Data" description="Where Agent CAD keeps your chats, models, and slices.">
-      {error ? <p className="text-sm text-danger">{error}</p> : null}
-
-      <Card className="flex items-center justify-between gap-3 p-4">
-        <div className="flex min-w-0 items-center gap-3">
-          <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0">
-            <div className="text-xs text-subtle-foreground">Storage location</div>
-            <div className="truncate font-mono text-sm">{root ?? "…"}</div>
-          </div>
-        </div>
-      </Card>
-
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {usage ? (
-          <>
-            <UsageCard icon={MessageSquare} label="Chats" value={String(usage.chats)} />
-            <UsageCard icon={Box} label="Models" value={String(usage.models)} />
-            <UsageCard icon={Layers} label="Slices" value={String(usage.slices)} />
-            <UsageCard icon={HardDrive} label="Disk used" value={formatBytes(usage.bytes_used)} />
-          </>
-        ) : (
-          Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[72px]" />)
-        )}
+    <div className="space-y-8">
+      <div>
+        <h1 className="text-xl font-semibold">Storage &amp; Data</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Manage where Agent CAD keeps your projects, models, and g-code — and reclaim space when you need it.
+        </p>
       </div>
 
-      {note ? (
-        <p className="flex items-center gap-2 text-sm text-success">
-          <span className="h-1.5 w-1.5 rounded-full bg-success" />
-          {note}
-        </p>
-      ) : null}
+      {error ? <p className="text-sm text-danger">{error}</p> : null}
+      {note ? <p className="text-sm text-success">{note}</p> : null}
 
-      <div className="space-y-3 border-t pt-5">
-        <h2 className="text-sm font-semibold">Maintenance</h2>
-        <Row
-          title="Clear cached artifacts"
-          body="Delete regenerable geometry (STL/g-code). Keeps your model source and chats."
-        >
+      {/* Storage location */}
+      <section className="space-y-3">
+        <SectionHead title="Storage location" description="Where Agent CAD saves generated models and g-code on this device." />
+        <Card className="flex items-center justify-between gap-3 p-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0 truncate font-mono text-sm">{root}</div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button variant="outline" size="sm" onClick={openFolder}>
+              Open folder
+            </Button>
+            <Button variant="outline" size="sm" disabled title="Changing the location is coming soon">
+              Change
+            </Button>
+          </div>
+        </Card>
+      </section>
+
+      {/* Usage */}
+      <section className="space-y-3">
+        <SectionHead title="Usage" description="How much space Agent CAD is currently using on disk." />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {usage ? (
+            <>
+              <UsageCard icon={MessageSquare} label="Projects & chats" value={String(usage.chats)} />
+              <UsageCard icon={Box} label="Models" value={String(usage.models)} />
+              <UsageCard icon={Layers} label="G-code slices" value={String(usage.slices)} />
+              <UsageCard icon={HardDrive} label="Disk used" value={formatBytes(usage.bytes_used)} />
+            </>
+          ) : (
+            Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-[72px]" />)
+          )}
+        </div>
+      </section>
+
+      {/* Data management */}
+      <section className="space-y-3">
+        <SectionHead
+          title="Data management"
+          description="Free up space or reset Agent CAD. Destructive actions can't be undone."
+        />
+        <Row title="Clear cached artifacts" body="Delete regenerable geometry (STL/g-code). Keeps your model source and chats.">
           <ConfirmDialog
             trigger={<Button variant="outline" size="sm">Clear cache</Button>}
             title="Clear cached artifacts?"
@@ -100,6 +147,12 @@ export default function StoragePage() {
               await load();
             }}
           />
+        </Row>
+        <Row
+          title="Auto-clear artifacts older than 30 days"
+          body="Automatically remove cached artifacts after a month."
+        >
+          <Switch checked={autoClear} onCheckedChange={toggleAutoClear} disabled={!settings} />
         </Row>
         <Row title="Clear chat history" body="Remove every chat and its artifacts. This cannot be undone.">
           <ConfirmDialog
@@ -119,10 +172,7 @@ export default function StoragePage() {
             }}
           />
         </Row>
-        <Row
-          title="Reset all data"
-          body="Wipe chats, printers, and imports, reset settings, and re-seed the Ender 5 S1 + PLA."
-        >
+        <Row title="Reset all data" body="Wipe chats, printers, and imports, reset settings, and re-seed the Ender 5 S1 + PLA.">
           <ConfirmDialog
             trigger={<Button variant="destructive" size="sm">Reset everything</Button>}
             title="Reset all data?"
@@ -136,8 +186,8 @@ export default function StoragePage() {
             }}
           />
         </Row>
-      </div>
-    </SettingsSection>
+      </section>
+    </div>
   );
 }
 

@@ -5,14 +5,9 @@ import { Sparkles, User } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-/** One chat turn. Assistant narration is templated server-side (§3.10); we just render it. */
-export function MessageBubble({
-  message,
-  onQuickReply,
-}: {
-  message: Message;
-  onQuickReply?: (reply: string) => void;
-}) {
+/** One chat turn. Assistant narration is templated server-side (§3.10); we just render it.
+ * Quick-reply chips are surfaced as a dedicated row above the composer, not per-bubble. */
+export function MessageBubble({ message }: { message: Message }) {
   const isUser = message.role === "user";
   return (
     <div className={cn("flex gap-3", isUser && "flex-row-reverse")}>
@@ -33,20 +28,6 @@ export function MessageBubble({
         >
           {message.content}
         </div>
-        {message.quick_replies?.length ? (
-          <div className="flex flex-wrap gap-2">
-            {message.quick_replies.map((reply) => (
-              <button
-                key={reply}
-                type="button"
-                onClick={() => onQuickReply?.(reply)}
-                className="rounded-full border border-border-strong bg-elevated px-3 py-1 text-xs text-foreground transition-colors hover:border-primary hover:text-primary"
-              >
-                {reply}
-              </button>
-            ))}
-          </div>
-        ) : null}
       </div>
     </div>
   );

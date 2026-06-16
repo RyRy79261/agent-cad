@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { BuildVolume } from "@agent-cad/types";
-import { Box, Layers, Maximize2, AlertTriangle, Loader2 } from "lucide-react";
+import { Box, Layers, Maximize2, RotateCcw, Printer as PrinterIcon, AlertTriangle, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,8 @@ export interface ViewerPanelProps {
   tab: ViewerTab;
   onTabChange: (tab: ViewerTab) => void;
   buildVolume?: BuildVolume;
+  /** Active printer name — shown as a read-only chip in the header. */
+  printerName?: string | null;
   /** Show a "generating model…" overlay over the Model tab. */
   generating?: boolean;
   /** Show a "slicing…" overlay over the Slice tab. */
@@ -86,19 +88,31 @@ export function ViewerPanel({
   tab,
   onTabChange,
   buildVolume,
+  printerName,
   generating,
   slicing,
   className,
 }: ViewerPanelProps) {
   const [fitKey, setFitKey] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
   const showModel = tab === "model";
   const artifactKey = (showModel ? stlUrl : gcodeUrl) ?? "none";
 
+  function toggleFullscreen() {
+    const el = containerRef.current;
+    if (!el) return;
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void el.requestFullscreen?.();
+  }
+
   return (
-    <div className={cn("flex h-full flex-col overflow-hidden rounded-xl border bg-card", className)}>
+    <div
+      ref={containerRef}
+      className={cn("flex h-full flex-col overflow-hidden rounded-xl border bg-card", className)}
+    >
       <div className="flex items-center justify-between gap-2 border-b px-2 py-1.5">
         <div className="flex items-center gap-1">
-          <TabButton active={showModel} onClick={() => onTabChange("model")} icon={Box}>
+          <TabButton active={showModel} disabled={!stlUrl} onClick={() => onTabChange("model")} icon={Box}>
             3D Model
           </TabButton>
           <TabButton
@@ -110,15 +124,32 @@ export function ViewerPanel({
             Slice Preview
           </TabButton>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8 text-muted-foreground"
-          title="Reset view"
-          onClick={() => setFitKey((k) => k + 1)}
-        >
-          <Maximize2 className="h-4 w-4" />
-        </Button>
+        <div className="flex items-center gap-1">
+          {printerName ? (
+            <span className="mr-1 hidden items-center gap-1.5 rounded-full bg-elevated px-2.5 py-1 text-xs text-muted-foreground sm:inline-flex">
+              <PrinterIcon className="h-3.5 w-3.5" />
+              {printerName}
+            </span>
+          ) : null}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground"
+            title="Reset view"
+            onClick={() => setFitKey((k) => k + 1)}
+          >
+            <RotateCcw className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 text-muted-foreground"
+            title="Fullscreen"
+            onClick={toggleFullscreen}
+          >
+            <Maximize2 className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
 
       <div className="relative min-h-[280px] flex-1 bg-background">
@@ -132,7 +163,11 @@ export function ViewerPanel({
             stlUrl ? (
               <StlViewer key={`stl:${stlUrl}:${fitKey}`} url={stlUrl} />
             ) : (
-              <Placeholder icon={Box} title="Awaiting model" hint="Generate a part to preview it here." />
+              <Placeholder
+                icon={Box}
+                title="Your 3D preview will appear here once the spec is locked in."
+                hint="Answer Agent CAD's questions to generate a model."
+              />
             )
           ) : gcodeUrl ? (
             <GcodeViewer key={`gcode:${gcodeUrl}:${fitKey}`} url={gcodeUrl} buildVolume={buildVolume} />

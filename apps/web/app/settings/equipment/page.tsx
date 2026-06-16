@@ -3,12 +3,19 @@
 import * as React from "react";
 import Link from "next/link";
 import type { Printer } from "@agent-cad/types";
-import { Plus, Printer as PrinterIcon, Star, Trash2, ChevronRight } from "lucide-react";
+import { Plus, Printer as PrinterIcon, Star, Info, MoreHorizontal, ChevronRight } from "lucide-react";
 
 import * as api from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { SettingsSection } from "@/components/settings/section";
 import { ConfirmDialog } from "@/components/settings/confirm-dialog";
 import { PrinterDialog } from "@/components/settings/printer-dialog";
@@ -31,15 +38,10 @@ export default function EquipmentPage() {
     })();
   }, [load]);
 
-  async function setDefault(p: Printer) {
-    await api.updatePrinter(p.id, { ...p, default: true });
-    await load();
-  }
-
   return (
     <SettingsSection
       title="Equipment"
-      description="Your printers and their filament profiles. The default printer drives the fit check."
+      description="Your printers and their saved filament profiles. The default printer drives the fit check."
       action={
         <PrinterDialog
           mode="create"
@@ -63,61 +65,90 @@ export default function EquipmentPage() {
       ) : (
         <div className="space-y-3">
           {printers.map((p) => (
-            <Card key={p.id} className="flex items-center gap-4 p-4">
-              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-elevated text-muted-foreground">
-                <PrinterIcon className="h-5 w-5" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="font-medium">{p.name}</span>
-                  {p.default ? (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-accent-muted px-2 py-0.5 text-[11px] text-accent-bright">
-                      <Star className="h-3 w-3" />
-                      Default
-                    </span>
-                  ) : null}
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {p.kind} · {p.build_volume.x}×{p.build_volume.y}×{p.build_volume.z} mm ·{" "}
-                  {p.filaments.length} profile{p.filaments.length === 1 ? "" : "s"}
-                </div>
-              </div>
-              {!p.default ? (
-                <Button variant="ghost" size="sm" onClick={() => setDefault(p)}>
-                  Set default
-                </Button>
-              ) : null}
-              <ConfirmDialog
-                trigger={
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:text-danger"
-                    disabled={printers.length <= 1}
-                    aria-label={`Delete ${p.name}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                }
-                title={`Delete ${p.name}?`}
-                description="The printer and its filament profiles will be removed."
-                confirmLabel="Delete printer"
-                destructive
-                onConfirm={async () => {
-                  await api.deletePrinter(p.id);
-                  await load();
-                }}
-              />
-              <Button variant="outline" size="sm" asChild className="gap-1">
-                <Link href={`/settings/equipment/${p.id}`}>
-                  Manage
-                  <ChevronRight className="h-4 w-4" />
-                </Link>
-              </Button>
-            </Card>
+            <PrinterCard key={p.id} printer={p} canDelete={printers.length > 1} onChanged={load} />
           ))}
         </div>
       )}
+
+      <p className="flex items-start gap-2 pt-1 text-sm text-muted-foreground">
+        <Info className="mt-0.5 h-4 w-4 shrink-0 text-subtle-foreground" />
+        Filament profiles save each material&apos;s nozzle and bed temperatures, so the AI won&apos;t pause to ask for
+        them mid-chat.
+      </p>
     </SettingsSection>
+  );
+}
+
+function PrinterCard({ printer, canDelete, onChanged }: { printer: Printer; canDelete: boolean; onChanged: () => void }) {
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
+
+  async function setDefault() {
+    await api.updatePrinter(printer.id, { ...printer, default: true });
+    onChanged();
+  }
+
+  return (
+    <Card className="flex items-center gap-4 p-4">
+      <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-elevated text-muted-foreground">
+        <PrinterIcon className="h-5 w-5" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="font-medium">{printer.name}</span>
+          {printer.default ? (
+            <span className="inline-flex items-center gap-1 rounded-full bg-accent-muted px-2 py-0.5 text-[11px] text-accent-bright">
+              <Star className="h-3 w-3" />
+              Default
+            </span>
+          ) : null}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {printer.kind} · {printer.build_volume.x}×{printer.build_volume.y}×{printer.build_volume.z} mm ·{" "}
+          {printer.filaments.length} profile{printer.filaments.length === 1 ? "" : "s"}
+        </div>
+      </div>
+
+      <Button variant="outline" size="sm" asChild className="gap-1">
+        <Link href={`/settings/equipment/${printer.id}`}>
+          Manage
+          <ChevronRight className="h-4 w-4" />
+        </Link>
+      </Button>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" title="More actions">
+            <MoreHorizontal className="h-4 w-4" />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem disabled={printer.default} onClick={setDefault}>
+            <Star className="h-4 w-4" />
+            Set as default
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            className="text-danger"
+            disabled={!canDelete}
+            onClick={() => setConfirmDelete(true)}
+          >
+            Delete printer
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title={`Delete ${printer.name}?`}
+        description="The printer and its filament profiles will be removed."
+        confirmLabel="Delete printer"
+        destructive
+        onConfirm={async () => {
+          await api.deletePrinter(printer.id);
+          onChanged();
+        }}
+      />
+    </Card>
   );
 }

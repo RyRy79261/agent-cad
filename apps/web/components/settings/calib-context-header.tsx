@@ -22,7 +22,8 @@ export interface CalibContextHeaderProps {
  */
 export function CalibContextHeader({ printer, filament, isOriginal, onResetOriginal }: CalibContextHeaderProps) {
   const bv = printer.build_volume;
-  const meta = [filament.brand, filament.color].filter(Boolean).join(" · ");
+  // Chip reads "material · color" (the design's "PETG · Slate Grey"); brand is omitted here.
+  const meta = filament.color ?? "";
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
       <div className="flex items-center gap-3">

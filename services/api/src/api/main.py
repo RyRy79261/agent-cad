@@ -165,6 +165,23 @@ def storage_usage_ep() -> dict:
     return storage_mod.usage(store)
 
 
+@app.post("/storage/reveal", tags=["storage"])
+def storage_reveal_ep() -> dict:
+    """Best-effort 'open folder' on the storage root (xdg-open / open / wslview / explorer.exe)."""
+    import shutil
+    import subprocess
+
+    root = str(store.root)
+    for opener in ("wslview", "xdg-open", "open", "explorer.exe"):
+        if shutil.which(opener):
+            try:
+                subprocess.Popen([opener, root])  # noqa: S603 - fixed openers, controlled path
+                return {"ok": True, "opener": opener, "path": root}
+            except OSError:
+                continue
+    return {"ok": False, "path": root}
+
+
 @app.post("/storage/clear-artifacts", tags=["storage"])
 def clear_artifacts_ep() -> dict:
     """Delete regenerable geometry/g-code (keeps model.py / chat.json sources)."""

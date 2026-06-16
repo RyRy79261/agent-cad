@@ -106,19 +106,13 @@ export function GcodeViewer({
       <canvas ref={canvasRef} style={{ flex: 1, width: "100%", minHeight: 0 }} />
       {error ? <p style={{ color: "#fca5a5", fontSize: "0.8rem", margin: 4 }}>g-code preview error: {error}</p> : null}
       {maxLayer > 0 ? (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            padding: "8px 10px",
-            fontSize: "0.78rem",
-            color: "#9aa7bd",
-          }}
-        >
-          <span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-            Layer {layer}/{maxLayer}
-          </span>
+        <div style={{ padding: "8px 10px", fontSize: "0.78rem", color: "#9aa7bd" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+            <span>Layer preview</span>
+            <span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+              Layer {layer} / {maxLayer}
+            </span>
+          </div>
           <input
             type="range"
             min={1}
@@ -126,7 +120,7 @@ export function GcodeViewer({
             value={layer}
             onChange={(e) => onLayer(Number(e.target.value))}
             aria-label="layer"
-            style={{ flex: 1, accentColor: "#3b82f6" }}
+            style={{ width: "100%", accentColor: "#3b82f6" }}
           />
         </div>
       ) : null}

@@ -15,7 +15,11 @@ import {
 } from "@/components/ui/dialog";
 
 export interface ConfirmDialogProps {
-  trigger: React.ReactNode;
+  /** Trigger element (uncontrolled mode). Omit when driving `open`/`onOpenChange` yourself. */
+  trigger?: React.ReactNode;
+  /** Controlled open state (e.g. opened from a dropdown menu item). */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   title: string;
   description: React.ReactNode;
   confirmLabel?: string;
@@ -26,14 +30,19 @@ export interface ConfirmDialogProps {
 /** A confirm dialog naming exactly what will happen; disabled while the action runs (FR-SET-2). */
 export function ConfirmDialog({
   trigger,
+  open: openProp,
+  onOpenChange,
   title,
   description,
   confirmLabel = "Confirm",
   destructive,
   onConfirm,
 }: ConfirmDialogProps) {
-  const [open, setOpen] = React.useState(false);
+  const [openState, setOpenState] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openState;
+  const setOpen = (o: boolean) => (controlled ? onOpenChange?.(o) : setOpenState(o));
 
   async function confirm() {
     setBusy(true);
@@ -47,7 +56,7 @@ export function ConfirmDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !busy && setOpen(o)}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      {trigger ? <DialogTrigger asChild>{trigger}</DialogTrigger> : null}
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>

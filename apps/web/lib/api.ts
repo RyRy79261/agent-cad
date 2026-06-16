@@ -124,6 +124,8 @@ const Usage = z.object({
   artifact_bytes: z.number(),
 });
 export const storageUsage = () => request("/storage/usage", Usage);
+export const revealStorage = () =>
+  request("/storage/reveal", z.object({ ok: z.boolean(), path: z.string(), opener: z.string().nullish() }), jsonInit("POST"));
 export const clearArtifacts = () => request("/storage/clear-artifacts", z.object({ bytes_freed: z.number() }), jsonInit("POST"));
 export const clearChats = () => request("/storage/clear-chats", z.object({ removed: z.number() }), jsonInit("POST"));
 export const resetStore = () => request("/storage/reset", Ok, jsonInit("POST", { confirm: true }));

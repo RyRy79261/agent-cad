@@ -4,13 +4,31 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import type { FilamentProfile, Printer } from "@agent-cad/types";
-import { ArrowLeft, Plus, Pencil, Trash2, Flame, ThermometerSun, Gauge, ChevronRight, CirclePlus } from "lucide-react";
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  Flame,
+  ThermometerSun,
+  Gauge,
+  ChevronRight,
+  CirclePlus,
+  MoreHorizontal,
+  Star,
+} from "lucide-react";
 
 import * as api from "@/lib/api";
 import { swatchColor } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { ConfirmDialog } from "@/components/settings/confirm-dialog";
 import { PrinterDialog } from "@/components/settings/printer-dialog";
 import { FilamentDialog } from "@/components/settings/filament-dialog";
@@ -29,6 +47,7 @@ export default function PrinterDetailPage() {
   const router = useRouter();
   const [printer, setPrinter] = React.useState<Printer | null>(null);
   const [error, setError] = React.useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = React.useState(false);
 
   const load = React.useCallback(async () => {
     try {
@@ -45,13 +64,12 @@ export default function PrinterDetailPage() {
   }, [load]);
 
   const editorHref = (fid: string) => `/settings/equipment/${printerId}/filaments/${fid}`;
-  // Creating a profile drops you straight into its calibration editor to set the full settings.
   const onCreated = (fid: string) => router.push(editorHref(fid));
 
   if (error) {
     return (
       <div className="space-y-4">
-        <BackLink />
+        <Breadcrumb name="" />
         <p className="text-sm text-danger">{error}</p>
       </div>
     );
@@ -59,17 +77,30 @@ export default function PrinterDetailPage() {
   if (!printer) {
     return (
       <div className="space-y-4">
-        <BackLink />
+        <Breadcrumb name="" />
         <Skeleton className="h-32" />
       </div>
     );
   }
 
   const bv = printer.build_volume;
+  const addFilament = (
+    <FilamentDialog
+      mode="create"
+      printerId={printer.id}
+      onSaved={onCreated}
+      trigger={
+        <Button size="sm" className="gap-2">
+          <Plus className="h-4 w-4" />
+          Add filament
+        </Button>
+      }
+    />
+  );
 
   return (
     <div className="space-y-6">
-      <BackLink />
+      <Breadcrumb name={printer.name} />
 
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -88,24 +119,49 @@ export default function PrinterDetailPage() {
             </p>
           </div>
         </div>
-        <PrinterDialog
-          mode="edit"
-          printer={printer}
-          onSaved={load}
-          trigger={
-            <Button variant="outline" size="sm" className="gap-2">
-              <Pencil className="h-4 w-4" />
-              Edit
-            </Button>
-          }
-        />
+        <div className="flex items-center gap-1">
+          <PrinterDialog
+            mode="edit"
+            printer={printer}
+            onSaved={load}
+            trigger={
+              <Button variant="outline" size="sm" className="gap-2">
+                <Pencil className="h-4 w-4" />
+                Edit Printer
+              </Button>
+            }
+          />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" title="More actions">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                disabled={printer.default}
+                onClick={async () => {
+                  await api.updatePrinter(printer.id, { ...printer, default: true });
+                  await load();
+                }}
+              >
+                <Star className="h-4 w-4" />
+                Set as default
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="text-danger" onClick={() => setConfirmDelete(true)}>
+                Delete printer
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Build volume" value={`${bv.x}×${bv.y}×${bv.z}`} />
         <Stat label="Nozzle" value={`${printer.nozzle_diameter_mm} mm`} />
         <Stat label="Firmware" value={printer.firmware} />
-        <Stat label="Profiles" value={String(printer.filaments.length)} />
+        <Stat label="Filaments" value={String(printer.filaments.length)} />
       </div>
 
       <div className="space-y-3 border-t pt-5">
@@ -117,20 +173,13 @@ export default function PrinterDetailPage() {
               what temperature your PLA runs at.
             </p>
           </div>
-          <FilamentDialog
-            mode="create"
-            printerId={printer.id}
-            onSaved={onCreated}
-            trigger={
-              <Button size="sm" className="gap-2">
-                <Plus className="h-4 w-4" />
-                Add filament
-              </Button>
-            }
-          />
+          {addFilament}
         </div>
 
-        {printer.filaments.length === 0 ? (
+        <div className="space-y-2">
+          {printer.filaments.map((f) => (
+            <FilamentRow key={f.id} printerId={printer.id} filament={f} href={editorHref(f.id)} onChanged={load} />
+          ))}
           <FilamentDialog
             mode="create"
             printerId={printer.id}
@@ -138,21 +187,28 @@ export default function PrinterDetailPage() {
             trigger={
               <button
                 type="button"
-                className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed bg-card/50 px-4 py-6 text-sm text-subtle-foreground transition-colors hover:border-primary hover:text-foreground"
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed bg-card/50 px-4 py-4 text-sm text-subtle-foreground transition-colors hover:border-primary hover:text-foreground"
               >
                 <CirclePlus className="h-4 w-4" />
                 Add a filament profile
               </button>
             }
           />
-        ) : (
-          <div className="space-y-2">
-            {printer.filaments.map((f) => (
-              <FilamentRow key={f.id} printerId={printer.id} filament={f} href={editorHref(f.id)} onChanged={load} />
-            ))}
-          </div>
-        )}
+        </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmDelete}
+        onOpenChange={setConfirmDelete}
+        title={`Delete ${printer.name}?`}
+        description="The printer and all its filament profiles will be removed."
+        confirmLabel="Delete printer"
+        destructive
+        onConfirm={async () => {
+          await api.deletePrinter(printer.id);
+          router.push("/settings/equipment");
+        }}
+      />
     </div>
   );
 }
@@ -192,6 +248,12 @@ function FilamentRow({
           <Spec icon={Gauge} value={s.wall_speed != null ? `${s.wall_speed} mm/s` : "—"} label="Speed" />
         </div>
       </Link>
+      <Button variant="ghost" size="sm" asChild className="gap-1.5 text-muted-foreground">
+        <Link href={href}>
+          <Pencil className="h-3.5 w-3.5" />
+          Edit
+        </Link>
+      </Button>
       <ConfirmDialog
         trigger={
           <Button
@@ -212,7 +274,6 @@ function FilamentRow({
           onChanged();
         }}
       />
-      <ChevronRight className="h-4 w-4 shrink-0 text-subtle-foreground" />
     </Card>
   );
 }
@@ -229,14 +290,14 @@ function Spec({ icon: Icon, value, label }: { icon: typeof Flame; value: string;
   );
 }
 
-function BackLink() {
+function Breadcrumb({ name }: { name: string }) {
   return (
-    <Link
-      href="/settings/equipment"
-      className="inline-flex items-center gap-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
-    >
-      <ArrowLeft className="h-3.5 w-3.5" />
-      All printers
-    </Link>
+    <nav className="flex items-center gap-1.5 text-xs text-subtle-foreground">
+      <Link href="/settings/equipment" className="hover:text-foreground">
+        Equipment
+      </Link>
+      <ChevronRight className="h-3.5 w-3.5" />
+      <span className="text-muted-foreground">{name || "Printer"}</span>
+    </nav>
   );
 }

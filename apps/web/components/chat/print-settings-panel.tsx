@@ -71,7 +71,7 @@ export function PrintSettingsPanel({
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">Printer</Label>
-          <Select value={printerId ?? ""} onValueChange={onPrinterChange}>
+          <Select value={printerId ?? ""} onValueChange={onPrinterChange} disabled={!hasModel}>
             <SelectTrigger className="h-8">
               <SelectValue placeholder="Printer" />
             </SelectTrigger>
@@ -86,7 +86,11 @@ export function PrintSettingsPanel({
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">Filament</Label>
-          <Select value={filamentId ?? ""} onValueChange={onFilamentChange} disabled={filaments.length === 0}>
+          <Select
+            value={filamentId ?? ""}
+            onValueChange={onFilamentChange}
+            disabled={!hasModel || filaments.length === 0}
+          >
             <SelectTrigger className="h-8">
               <SelectValue placeholder="Filament" />
             </SelectTrigger>
@@ -145,7 +149,7 @@ export function PrintSettingsPanel({
         {sliced && onDownload ? (
           <Button variant="outline" onClick={onDownload} className="gap-2">
             <Download className="h-4 w-4" />
-            Download
+            Download G-code
           </Button>
         ) : null}
       </div>

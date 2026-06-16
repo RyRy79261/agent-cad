@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import type { BuildVolume, Chat, Printer, SettingsDescriptor, Settings } from "@agent-cad/types";
-import { AlertCircle, Upload } from "lucide-react";
+import { AlertCircle, Upload, Hammer, SquarePen, PanelRight, MoreHorizontal, Box, ArrowRight, Trash2 } from "lucide-react";
 
 import * as api from "@/lib/api";
 import {
@@ -12,6 +12,13 @@ import {
   latestArtifact,
   sliceStatsFrom,
 } from "@/lib/chat";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Sidebar } from "./sidebar";
 import { Composer } from "./composer";
 import { MessageBubble } from "./message-bubble";
@@ -20,6 +27,10 @@ import { Stepper } from "./stepper";
 import { PrintSettingsPanel } from "./print-settings-panel";
 import { ViewerPanel, type ViewerTab } from "@/components/viewer/viewer-panel";
 import type { SettingsValues } from "@/components/settings/settings-form";
+
+/** Refine suggestions shown above the composer once a model exists (design: "Quick Edits"). */
+const QUICK_EDITS = ["Make the base wider", "Steeper angle", "Thicken the lip"];
+const HOW_IT_WORKS = ["Describe", "Refine", "Slice & print"];
 
 /**
  * The chat workspace: 3-pane shell (sidebar | thread+composer | viewer-over-
@@ -40,6 +51,7 @@ export function ChatWorkspace() {
 
   const [input, setInput] = React.useState("");
   const [tab, setTab] = React.useState<ViewerTab>("model");
+  const [showPreview, setShowPreview] = React.useState(true);
   const [generating, setGenerating] = React.useState(false);
   const [interviewing, setInterviewing] = React.useState(false);
   const [slicing, setSlicing] = React.useState(false);
@@ -270,6 +282,11 @@ export function ChatWorkspace() {
   const status = active?.status ?? "new";
   const activePrinter = printers.find((p) => p.id === printerId) ?? null;
   const buildVolume = activePrinter?.build_volume as BuildVolume | undefined;
+  const busy = generating || interviewing;
+  // Suggestions row above the composer: refine "quick edits" once a model exists,
+  // otherwise the latest AI turn's quick-reply chips (the interview answers).
+  const lastAi = active ? [...active.messages].reverse().find((m) => m.role === "assistant") : undefined;
+  const suggestions = active?.current_stl ? QUICK_EDITS : lastAi?.quick_replies ?? [];
 
   const onValueChange = React.useCallback(
     (key: string, value: unknown) => setSliceValues((v) => ({ ...v, [key]: value })),
@@ -300,8 +317,40 @@ export function ChatWorkspace() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex items-center justify-between gap-3 border-b px-6 py-3">
-          <h1 className="truncate text-sm font-semibold">{active?.title ?? "New chat"}</h1>
-          {active ? <StatusBadge status={status} /> : null}
+          <div className="flex min-w-0 items-center gap-2">
+            {active?.current_stl ? <Box className="h-4 w-4 shrink-0 text-muted-foreground" /> : null}
+            <h1 className="truncate text-sm font-semibold">{active?.title ?? "New chat"}</h1>
+            {active ? <StatusBadge status={status} /> : null}
+          </div>
+          {active ? (
+            <div className="flex shrink-0 items-center gap-0.5">
+              <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" title="New chat" onClick={newChat}>
+                <SquarePen className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 text-muted-foreground"
+                title={showPreview ? "Hide preview panel" : "Show preview panel"}
+                onClick={() => setShowPreview((s) => !s)}
+              >
+                <PanelRight className="h-4 w-4" />
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" title="More">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem className="text-danger" onClick={() => active && deleteChat(active.id)}>
+                    <Trash2 className="h-4 w-4" />
+                    Delete chat
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ) : null}
         </header>
 
         <div className="flex min-h-0 flex-1">
@@ -312,7 +361,7 @@ export function ChatWorkspace() {
                 <div className="flex-1 overflow-y-auto px-6 py-5">
                   <div className="mx-auto flex max-w-2xl flex-col gap-5">
                     {active.messages.map((m, i) => (
-                      <MessageBubble key={i} message={m} onQuickReply={handleSubmit} />
+                      <MessageBubble key={i} message={m} />
                     ))}
                     {interviewing ? (
                       <p className="text-sm text-muted-foreground">Thinking about your request…</p>
@@ -333,12 +382,26 @@ export function ChatWorkspace() {
                   </div>
                 </div>
                 <div className="border-t px-6 py-4">
-                  <div className="mx-auto max-w-2xl">
+                  <div className="mx-auto max-w-2xl space-y-3">
+                    {suggestions.length > 0 && !busy ? (
+                      <div className="flex flex-wrap gap-2">
+                        {suggestions.map((s) => (
+                          <button
+                            key={s}
+                            type="button"
+                            onClick={() => handleSubmit(s)}
+                            className="rounded-full border border-border-strong bg-elevated px-3 py-1 text-xs text-foreground transition-colors hover:border-primary hover:text-primary"
+                          >
+                            {s}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
                     <Composer
                       value={input}
                       onChange={setInput}
                       onSubmit={handleSubmit}
-                      busy={generating || interviewing}
+                      busy={busy}
                       variant="inline"
                     />
                   </div>
@@ -347,32 +410,45 @@ export function ChatWorkspace() {
             ) : (
               <div className="flex flex-1 flex-col items-center justify-center px-6">
                 <div className="w-full max-w-xl text-center">
-                  <h2 className="mb-2 text-2xl font-semibold">What do you want to print?</h2>
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10">
+                    <Hammer className="h-6 w-6 text-primary" />
+                  </div>
+                  <h2 className="mb-2 text-2xl font-semibold">What would you like to make?</h2>
                   <p className="mb-6 text-sm text-muted-foreground">
-                    Describe a part — Agent CAD models it, checks printability, and slices it for your Ender 5 S1.
+                    Describe your idea in plain language. Agent CAD will ask a few quick questions, then generate a
+                    model that&apos;s ready to 3D print.
                   </p>
                   <Composer
                     value={input}
                     onChange={setInput}
                     onSubmit={handleSubmit}
-                    busy={generating || interviewing}
+                    busy={busy}
                     variant="hero"
                   />
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={generating || interviewing}
+                    disabled={busy}
                     className="mt-4 inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
                   >
                     <Upload className="h-3.5 w-3.5" />
                     or import an STL file
                   </button>
+                  <div className="mt-8 flex items-center justify-center gap-2 text-[11px] font-medium uppercase tracking-wide text-subtle-foreground">
+                    {HOW_IT_WORKS.map((step, i) => (
+                      <React.Fragment key={step}>
+                        <span>{step}</span>
+                        {i < HOW_IT_WORKS.length - 1 ? <ArrowRight className="h-3 w-3" /> : null}
+                      </React.Fragment>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}
           </main>
 
           {/* viewer-over-settings rail */}
+          {showPreview ? (
           <div className="flex w-[400px] shrink-0 flex-col gap-4 overflow-y-auto border-l p-4">
             <ViewerPanel
               className="min-h-[300px]"
@@ -381,6 +457,7 @@ export function ChatWorkspace() {
               tab={tab}
               onTabChange={setTab}
               buildVolume={buildVolume}
+              printerName={activePrinter?.name}
               generating={generating}
               slicing={slicing}
             />
@@ -409,6 +486,7 @@ export function ChatWorkspace() {
               onDownload={gcodeUrl ? () => window.open(gcodeUrl, "_blank") : undefined}
             />
           </div>
+          ) : null}
         </div>
 
         {error ? (

@@ -1,17 +1,17 @@
 "use client";
 
 import * as React from "react";
-import { ArrowUp, Loader2 } from "lucide-react";
+import { ArrowUp, Loader2, Smartphone, Cable, Cpu, Headphones } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 
 const QUICK_STARTS = [
-  "A 90 mm round coaster with a raised rim",
-  "A phone stand angled at 60°",
-  "A 20 mm calibration cube",
-  "A desk cable clip for a 6 mm cable",
+  { label: "A desk phone stand", icon: Smartphone },
+  { label: "Cable clips for my desk", icon: Cable },
+  { label: "A vented Raspberry Pi case", icon: Cpu },
+  { label: "A headphone hook", icon: Headphones },
 ];
 
 export interface ComposerProps {
@@ -87,18 +87,19 @@ export function Composer({
 
       {hero ? (
         <div className="mt-4 flex flex-wrap justify-center gap-2">
-          {QUICK_STARTS.map((q) => (
+          {QUICK_STARTS.map(({ label, icon: Icon }) => (
             <button
-              key={q}
+              key={label}
               type="button"
               disabled={disabled || busy}
               onClick={() => {
-                onChange(q);
-                onSubmit(q);
+                onChange(label);
+                onSubmit(label);
               }}
-              className="rounded-full border border-border-strong bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 rounded-full border border-border-strong bg-card px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
             >
-              {q}
+              <Icon className="h-3.5 w-3.5" />
+              {label}
             </button>
           ))}
         </div>

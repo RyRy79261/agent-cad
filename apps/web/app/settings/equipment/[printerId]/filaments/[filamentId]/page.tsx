@@ -145,7 +145,7 @@ export default function FilamentCalibrationPage() {
         <div className="flex items-center justify-between gap-3">
           <p className="flex items-center gap-1.5 text-xs text-subtle-foreground">
             <Info className="h-3.5 w-3.5" />
-            Changes apply to this filament&apos;s test prints and future slices.
+            Changes apply to this filament&apos;s test prints
           </p>
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={cancel} disabled={!dirty || saving}>
@@ -153,7 +153,7 @@ export default function FilamentCalibrationPage() {
             </Button>
             <Button onClick={save} disabled={!dirty || saving}>
               {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Save changes
+              Save
             </Button>
           </div>
         </div>
