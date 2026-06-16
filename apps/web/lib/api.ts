@@ -112,6 +112,8 @@ export async function importStl(file: File): Promise<ImportResult> {
   return request("/imports", ImportResult, { method: "POST", body: form });
 }
 export const calibrate = (body: CalibrateRequest) => request("/calibrate", JobRef, jsonInit("POST", body));
+const Sample = z.object({ name: z.string(), description: z.string().nullish(), available: z.boolean() });
+export const getSamples = () => request("/samples", z.array(Sample));
 
 // --- storage & data management --------------------------------------------- //
 const Usage = z.object({

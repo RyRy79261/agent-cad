@@ -37,7 +37,8 @@ export interface FilamentDialogProps {
   printerId: string;
   filament?: FilamentProfile;
   trigger: React.ReactNode;
-  onSaved: () => void;
+  /** Called after a successful save with the saved filament's id (so create can route to the editor). */
+  onSaved: (filamentId: string) => void;
 }
 
 /**
@@ -80,7 +81,7 @@ export function FilamentDialog({ mode, printerId, filament, trigger, onSaved }: 
       if (mode === "create") await api.createFilament(printerId, body);
       else await api.updateFilament(printerId, body.id, body);
       setOpen(false);
-      onSaved();
+      onSaved(body.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

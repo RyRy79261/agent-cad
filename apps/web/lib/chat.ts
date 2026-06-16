@@ -62,6 +62,19 @@ export function buildSliceSettings(
   return body as SliceSettings;
 }
 
+/** Shallow value-equality of two SliceSettings-shaped maps (ignores `raw`, treats null≈absent). */
+export function sameSettings(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  const keys = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})]);
+  for (const k of keys) {
+    if (k === "raw") continue;
+    const va = a?.[k];
+    const vb = b?.[k];
+    if (va == null && vb == null) continue;
+    if (va !== vb) return false;
+  }
+  return true;
+}
+
 export function formatPrintTime(seconds?: number | null): string {
   if (!seconds || seconds <= 0) return "—";
   const h = Math.floor(seconds / 3600);

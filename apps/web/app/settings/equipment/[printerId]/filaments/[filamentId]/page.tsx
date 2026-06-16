@@ -4,45 +4,48 @@ import * as React from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { FilamentProfile, Printer, SettingsDescriptor } from "@agent-cad/types";
-import { ArrowLeft, Box, Loader2, RotateCcw, Ship, Download } from "lucide-react";
+import { ChevronRight, Box, Ship, Info, Loader2, ArrowRight } from "lucide-react";
 
 import * as api from "@/lib/api";
-import { buildSliceSettings, isDirty } from "@/lib/chat";
+import { buildSliceSettings, isDirty, sameSettings } from "@/lib/chat";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SettingsForm, type SettingsValues } from "@/components/settings/settings-form";
+import { CalibContextHeader } from "@/components/settings/calib-context-header";
 
 /**
- * Filament · Calibration editor (SCR-022/025). Edit the filament's full slice
- * profile (descriptor-driven), Save / Cancel / reset to Original, then "Slice &
- * download" a calibration cube or Benchy at the saved settings — deliberately
- * simple: no wizard, the AI chat is the expert.
+ * Filament · Calibration editor (design: "Settings · Filament · Calibration").
+ * Context header + an editable, schema-driven Slice-settings form (the full
+ * descriptor — every available setting, not a hand-picked few) + Save/Cancel,
+ * then two Test-print cards (cube / Benchy) that open the Result screens. Stays
+ * simple — no tuning wizard.
  */
-export default function FilamentEditorPage() {
-  const params = useParams<{ printerId: string; filamentId: string }>();
-  const { printerId, filamentId } = params;
+export default function FilamentCalibrationPage() {
+  const { printerId, filamentId } = useParams<{ printerId: string; filamentId: string }>();
 
   const [printer, setPrinter] = React.useState<Printer | null>(null);
   const [filament, setFilament] = React.useState<FilamentProfile | null>(null);
   const [descriptor, setDescriptor] = React.useState<SettingsDescriptor | null>(null);
   const [values, setValues] = React.useState<SettingsValues>({});
+  const [benchyAvailable, setBenchyAvailable] = React.useState(true);
   const [saving, setSaving] = React.useState(false);
-  const [calibrating, setCalibrating] = React.useState<"cube" | "benchy" | null>(null);
   const [note, setNote] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     try {
-      const [p, d] = await Promise.all([
+      const [p, d, samples] = await Promise.all([
         api.getPrinter(printerId),
         api.getSettingsDescriptor(printerId, filamentId),
+        api.getSamples().catch(() => []),
       ]);
       const fil = p.filaments.find((f) => f.id === filamentId) ?? null;
       setPrinter(p);
       setFilament(fil);
       setDescriptor(d);
       setValues({ ...(fil?.settings ?? {}) });
+      setBenchyAvailable(samples.find((s) => s.name === "benchy")?.available ?? false);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -55,10 +58,12 @@ export default function FilamentEditorPage() {
   }, [load]);
 
   const dirty = isDirty(descriptor, values);
-  const onValueChange = (key: string, value: unknown) => {
+  const isOriginal = filament ? sameSettings(values, (filament.default_settings ?? {}) as Record<string, unknown>) : true;
+
+  function onValueChange(key: string, value: unknown) {
     setNote(null);
     setValues((v) => ({ ...v, [key]: value }));
-  };
+  }
 
   async function save() {
     if (!descriptor || !filament) return;
@@ -82,163 +87,165 @@ export default function FilamentEditorPage() {
   }
 
   function resetToOriginal() {
-    setValues({ ...(filament?.default_settings ?? {}) });
-    setNote("Reset to the committed-profile values — Save to keep.");
-  }
-
-  async function calibrate(target: "cube" | "benchy") {
-    setCalibrating(target);
-    setError(null);
-    setNote(null);
-    try {
-      const job = await api.runJob(() => api.calibrate({ target, printer_id: printerId, filament_id: filamentId }));
-      if (job.status !== "succeeded") {
-        throw new Error(job.error || `${target} slice ${job.status}`);
-      }
-      const url = (job.result?.gcode_url as string | undefined) ?? undefined;
-      if (url) {
-        window.open(api.assetUrl(url), "_blank");
-        setNote(`${target === "cube" ? "Cube" : "Benchy"} sliced — downloading g-code.`);
-      } else {
-        setNote(`${target} sliced but no g-code URL was returned.`);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setCalibrating(null);
-    }
+    setValues({ ...((filament?.default_settings ?? {}) as Record<string, unknown>) });
+    setNote("Reverted to the committed-profile values — Save to keep.");
   }
 
   if (error && !printer) {
     return (
       <div className="space-y-4">
-        <BackLink printerId={printerId} />
+        <Breadcrumb printerId={printerId} printerName="" filamentName="" />
         <p className="text-sm text-danger">{error}</p>
       </div>
     );
   }
-
   if (!printer || !filament || !descriptor) {
     return (
       <div className="space-y-4">
-        <BackLink printerId={printerId} />
-        <Skeleton className="h-40" />
+        <Skeleton className="h-16" />
+        <Skeleton className="h-64" />
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <BackLink printerId={printerId} />
-
-      {/* Calib context header (FR-HDR-1) */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4">
-        <div>
-          <h1 className="text-lg font-semibold">
-            {filament.name} <span className="text-sm font-normal text-subtle-foreground">on {printer.name}</span>
-          </h1>
-          <p className="text-xs text-muted-foreground">
-            {printer.kind} · {printer.nozzle_diameter_mm} mm nozzle · {printer.build_volume.x}×
-            {printer.build_volume.y}×{printer.build_volume.z} mm
-          </p>
-        </div>
-        <Button variant="ghost" size="sm" onClick={resetToOriginal} className="gap-2 text-muted-foreground">
-          <RotateCcw className="h-4 w-4" />
-          Original
-        </Button>
-      </div>
+      <Breadcrumb printerId={printerId} printerName={printer.name} filamentName={`${filament.material}${filament.color ? ` · ${filament.color}` : ""}`} />
+      <CalibContextHeader printer={printer} filament={filament} isOriginal={isOriginal} onResetOriginal={resetToOriginal} />
 
       {note ? <p className="text-sm text-success">{note}</p> : null}
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
-      <Card className="p-5">
-        <SettingsForm descriptor={descriptor} values={values} onChange={onValueChange} />
-      </Card>
-
-      <div className="flex items-center gap-2">
-        <Button onClick={save} disabled={!dirty || saving}>
-          {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-          Save changes
-        </Button>
-        <Button variant="outline" onClick={cancel} disabled={!dirty || saving}>
-          Cancel
-        </Button>
-      </div>
-
-      {/* Test prints — slice & download at the saved settings */}
-      <div className="space-y-3 border-t pt-5">
+      {/* Slice settings */}
+      <section className="space-y-3">
         <div>
-          <h2 className="text-sm font-semibold">Test prints</h2>
-          <p className="text-xs text-muted-foreground">
-            Slice a reference object at this filament&apos;s saved settings and download the g-code.
+          <h2 className="text-base font-semibold">Slice settings</h2>
+          <p className="text-sm text-muted-foreground">
+            Edit the values used to slice this filament&apos;s test prints, then save your changes.
+          </p>
+        </div>
+        <Card className="p-5">
+          <SettingsForm descriptor={descriptor} values={values} onChange={onValueChange} />
+        </Card>
+        <div className="flex items-center justify-between gap-3">
+          <p className="flex items-center gap-1.5 text-xs text-subtle-foreground">
+            <Info className="h-3.5 w-3.5" />
+            Changes apply to this filament&apos;s test prints and future slices.
+          </p>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={cancel} disabled={!dirty || saving}>
+              Cancel
+            </Button>
+            <Button onClick={save} disabled={!dirty || saving}>
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Save changes
+            </Button>
+          </div>
+        </div>
+      </section>
+
+      {/* Test prints */}
+      <section className="space-y-3 border-t pt-5">
+        <div>
+          <h2 className="text-base font-semibold">Test prints</h2>
+          <p className="text-sm text-muted-foreground">
+            Two standard reference objects you can slice with the settings above and print to check the result.
             {dirty ? " Save your changes first." : ""}
           </p>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <TestCard
+            printerId={printerId}
+            filamentId={filamentId}
+            target="cube"
             icon={Box}
             title="Calibration cube"
-            body="20 mm cube — dimensional accuracy."
-            busy={calibrating === "cube"}
-            disabled={dirty || calibrating !== null}
-            onClick={() => calibrate("cube")}
+            body="A 20 mm XYZ cube — a quick dimensional and surface-quality check."
+            disabled={dirty}
           />
           <TestCard
+            printerId={printerId}
+            filamentId={filamentId}
+            target="benchy"
             icon={Ship}
             title="3DBenchy"
-            body="The classic torture test."
-            busy={calibrating === "benchy"}
-            disabled={dirty || calibrating !== null}
-            onClick={() => calibrate("benchy")}
+            body="The classic torture test — overhangs, bridging, and fine surface detail."
+            disabled={dirty || !benchyAvailable}
+            disabledHint={!benchyAvailable ? "Benchy asset unavailable" : undefined}
           />
         </div>
-      </div>
+      </section>
     </div>
   );
 }
 
 function TestCard({
+  printerId,
+  filamentId,
+  target,
   icon: Icon,
   title,
   body,
-  busy,
   disabled,
-  onClick,
+  disabledHint,
 }: {
+  printerId: string;
+  filamentId: string;
+  target: "cube" | "benchy";
   icon: typeof Box;
   title: string;
   body: string;
-  busy: boolean;
   disabled: boolean;
-  onClick: () => void;
+  disabledHint?: string;
 }) {
+  const href = `/settings/equipment/${printerId}/filaments/${filamentId}/calibrate/${target}`;
   return (
     <Card className="flex flex-col gap-3 p-4">
-      <div className="flex items-center gap-2">
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-elevated text-muted-foreground">
-          <Icon className="h-4 w-4" />
+      <div className="flex items-center gap-3">
+        <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-elevated text-muted-foreground">
+          <Icon className="h-5 w-5" />
         </span>
         <div>
           <div className="text-sm font-medium">{title}</div>
           <div className="text-xs text-subtle-foreground">{body}</div>
         </div>
       </div>
-      <Button size="sm" variant="outline" className="gap-2" disabled={disabled} onClick={onClick}>
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-        Slice &amp; download
-      </Button>
+      {disabled ? (
+        <Button size="sm" variant="outline" className="gap-2" disabled>
+          {disabledHint ?? "Slice"}
+        </Button>
+      ) : (
+        <Button size="sm" variant="outline" className="gap-2" asChild>
+          <Link href={href}>
+            Slice
+            <ArrowRight className="h-4 w-4" />
+          </Link>
+        </Button>
+      )}
     </Card>
   );
 }
 
-function BackLink({ printerId }: { printerId: string }) {
+function Breadcrumb({
+  printerId,
+  printerName,
+  filamentName,
+}: {
+  printerId: string;
+  printerName: string;
+  filamentName: string;
+}) {
   return (
-    <Link
-      href={`/settings/equipment/${printerId}`}
-      className="inline-flex items-center gap-2 text-xs text-muted-foreground transition-colors hover:text-foreground"
-    >
-      <ArrowLeft className="h-3.5 w-3.5" />
-      Back to printer
-    </Link>
+    <nav className="flex flex-wrap items-center gap-1.5 text-xs text-subtle-foreground">
+      <Link href="/settings/equipment" className="hover:text-foreground">
+        Equipment
+      </Link>
+      <ChevronRight className="h-3.5 w-3.5" />
+      <Link href={`/settings/equipment/${printerId}`} className="hover:text-foreground">
+        {printerName || "Printer"}
+      </Link>
+      <ChevronRight className="h-3.5 w-3.5" />
+      <span className="text-muted-foreground">{filamentName || "Filament"}</span>
+    </nav>
   );
 }
