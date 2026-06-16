@@ -28,10 +28,10 @@ const API_URL = process.env.NEXT_PUBLIC_AGENT_CAD_API_URL ?? DEFAULT_API_URL;
 const TIPS = {
   infill: "How much plastic fills the inside (a lattice, not solid). Higher = stronger & heavier but slower. 15–20% is typical.",
   wallSpeed: "How fast the outer/inner walls print. Slower = cleaner walls and less corner bulge, but longer prints.",
-  jerk: "How abruptly the nozzle can change direction. Higher = sharper corners (less bulge) but risks ringing; lower = smoother but rounder corners.",
+  jerk: "How abruptly the nozzle can change direction. This is a ringing/ghosting control, NOT a corner-bulge fix — at 25 mm/s walls it's non-binding, so raising it does nothing for bulge. Keep it at 25; lowering it actually makes corner bulge worse.",
   bedTemp: "Heated-bed temperature. PLA grips a textured plate best around 55–60 °C. Too cold = poor first-layer adhesion / warping.",
   nozzleTemp: "How hot the molten plastic is. PLA ~200 °C. Too low = weak/under-extruded; too high = stringing.",
-  flow: "Multiplier on how much plastic is pushed. 0.95 = 5% under nominal. Lower if walls measure oversize — calibrate, don't guess.",
+  flow: "Multiplier on how much plastic is pushed — the #1 firmware-free lever for corner bulge. 0.95 = 5% under nominal and is about the floor; below ~0.92–0.93 you risk under-extrusion (gappy tops, weak walls). Calibrate against measured wall thickness, don't keep dropping it to chase corners.",
   retraction: "How far filament is pulled back on travel moves to stop oozing/stringing. The Sprite direct drive likes ~0.5–1.5 mm.",
   layerHeight: "Thickness of each printed layer. Smaller = smoother & more detail but slower; 0.2 mm is the reliable default.",
   wallLoops: "Number of perimeter outlines (shells) around each layer. More = stronger & more watertight; 2 is standard, 3–4 for sturdy parts.",
@@ -174,6 +174,9 @@ export function BuildDemo() {
       const saved = window.localStorage.getItem(VERSIONS_KEY);
       if (saved) {
         const parsed = JSON.parse(saved) as SettingsVersion[];
+        // localStorage isn't available during SSR, so hydrating saved versions must
+        // happen in this mount effect — a one-time synchronous set, not a render loop.
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setVersions(parsed);
         const def = parsed.find((v) => v.isDefault);
         if (def) applyBundle(def.settings);

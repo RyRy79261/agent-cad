@@ -26,9 +26,17 @@ research pass (multi-agent, 19/19 claims stood under adversarial review) conclud
   the project owner has chosen **not** to do (stay stock).
 - **The expert's "smooth the acceleration" instinct is the wrong lever** and would
   backfire: *lowering* acceleration/jerk *lengthens* the corner dwell and makes bulging
-  **worse**. Acceleration stays firmware-capped (500 mm/s²); jerk is instead *raised* to
-  25 (`machine_max_jerk_x/y`) to shorten the corner dwell. Lowering accel/jerk is the
-  lever for *ringing*, the opposite artifact.
+  **worse**. Acceleration stays firmware-capped (500 mm/s²); jerk stays at 25
+  (`machine_max_jerk_x/y`) — but treat it as a **guardrail, not a bulge lever**. At our
+  25 mm/s wall speed jerk is *non-binding* (jerk 25 = wall speed 25, so the corner is
+  already taken at full speed); raising it does **nothing** for bulge — confirmed by an
+  owner A/B (jerk 20→25→30→35 = zero visible change). Lowering accel/jerk is the lever
+  for *ringing*, the opposite artifact.
+- **The dominant firmware-free lever is flow ratio, not motion settings.** Lowering
+  flow removes the steady-state over-extrusion that piles up at corners — the owner's
+  0.98 → 0.95 gave the single biggest improvement. But **0.95 is about the floor for
+  PLA**: below ~0.92–0.93 you risk under-extrusion (gappy tops, weak walls), so
+  calibrate against measured wall thickness rather than dropping flow to chase corners.
 
 ## The firmware-free tune (applied to the committed profiles)
 
@@ -37,7 +45,8 @@ levers that don't need it. In `services/slice/src/slicer/profiles/ender5s1/`:
 
 | Change | File | From → To | Why |
 | --- | --- | --- | --- |
-| `outer_wall_speed` | process.json | 40 → **25** mm/s | Less cruise pressure → smaller corner over-deposit. Best PA-free lever. |
+| `filament_flow_ratio` | filament.json | 0.98 → **0.95** | **Dominant PA-free lever.** Less steady-state over-extrusion → less corner pile-up. ~Floor for PLA; don't go lower without a flow calibration (under-extrusion risk). |
+| `outer_wall_speed` | process.json | 40 → **25** mm/s | Less cruise pressure → smaller corner over-deposit. Marginal at 25 mm/s — diminishing returns below ~20. |
 | `inner_wall_speed` | process.json | 40 → **25** mm/s | Keep symmetric. |
 | `precise_outer_wall` | process.json | (unset) → **"1"** | Removes outer/inner wall overlap so the cube measures truer. Needs the inner→outer `wall_infill_order` we already use. |
 | `fan_max_speed` | filament.json | (inherited 80%) → **"100"** | The `fdm_filament_pla` base only gives 80%; full PLA cooling sets each layer before the next. |
