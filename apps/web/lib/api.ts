@@ -10,6 +10,7 @@ import {
   Chat,
   CalibrateRequest,
   DEFAULT_API_URL,
+  type FilamentProfile,
   ImportResult,
   InterviewResult,
   Job,
@@ -73,6 +74,12 @@ export const getPrinter = (id: string) => request(`/printers/${id}`, Printer);
 export const createPrinter = (p: Printer) => request("/printers", Printer, jsonInit("POST", p));
 export const updatePrinter = (id: string, p: Printer) => request(`/printers/${id}`, Printer, jsonInit("PUT", p));
 export const deletePrinter = (id: string) => request(`/printers/${id}`, Ok, jsonInit("DELETE"));
+export const createFilament = (printerId: string, f: FilamentProfile) =>
+  request(`/printers/${printerId}/filaments`, Printer, jsonInit("POST", f));
+export const updateFilament = (printerId: string, filamentId: string, f: FilamentProfile) =>
+  request(`/printers/${printerId}/filaments/${filamentId}`, Printer, jsonInit("PUT", f));
+export const deleteFilament = (printerId: string, filamentId: string) =>
+  request(`/printers/${printerId}/filaments/${filamentId}`, Printer, jsonInit("DELETE"));
 export const getSettingsDescriptor = (printerId: string, filamentId?: string) =>
   request(
     `/printers/${printerId}/settings-descriptor${filamentId ? `?filament=${encodeURIComponent(filamentId)}` : ""}`,
