@@ -76,6 +76,7 @@ export type ChatStatus = "new" | "interviewing" | "generating" | "model-ready" |
 export const STATUS_LABEL: Record<string, string> = {
   new: "New",
   interviewing: "Interviewing",
+  interviewed: "Interviewed",
   generating: "Generating…",
   "model-ready": "Model ready",
   "ready-to-print": "Ready to print",
@@ -88,6 +89,7 @@ export function currentStep(status: ChatStatus): number {
   switch (status) {
     case "interviewing":
       return 1;
+    case "interviewed":
     case "generating":
       return 2;
     case "model-ready":

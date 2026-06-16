@@ -4,6 +4,7 @@ import { STATUS_LABEL } from "@/lib/chat";
 const TONE: Record<string, string> = {
   new: "bg-elevated text-muted-foreground",
   interviewing: "bg-accent-muted text-accent-bright",
+  interviewed: "bg-accent-muted text-accent-bright",
   generating: "bg-accent-muted text-accent-bright",
   "model-ready": "bg-accent-muted text-accent-bright",
   "ready-to-print": "bg-success-muted text-success",

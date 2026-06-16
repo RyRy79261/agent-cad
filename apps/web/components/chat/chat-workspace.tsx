@@ -41,6 +41,7 @@ export function ChatWorkspace() {
   const [input, setInput] = React.useState("");
   const [tab, setTab] = React.useState<ViewerTab>("model");
   const [generating, setGenerating] = React.useState(false);
+  const [interviewing, setInterviewing] = React.useState(false);
   const [slicing, setSlicing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -79,7 +80,7 @@ export function ChatWorkspace() {
 
   React.useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [active?.messages.length, generating, slicing]);
+  }, [active?.messages.length, generating, interviewing, slicing]);
 
   const refreshChats = React.useCallback(async () => {
     try {
@@ -161,27 +162,60 @@ export function ChatWorkspace() {
     [refreshChats],
   );
 
+  // Clarify-before-generate (FR-CHAT-2). One interview turn either asks a follow-up
+  // (appended to the thread with quick-reply chips) or signals ready → auto-generate.
+  const interview = React.useCallback(
+    async (chatId: string, text: string) => {
+      setInterviewing(true);
+      setError(null);
+      try {
+        const job = await api.runJob(() => api.chatInterview(chatId, text));
+        const ready = Boolean(job.result?.ready);
+        const resolved = (job.result?.resolved_prompt as string | undefined) ?? text;
+        setActive(await api.getChat(chatId));
+        await refreshChats();
+        if (ready) await generate(chatId, resolved);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setInterviewing(false);
+      }
+    },
+    [generate, refreshChats],
+  );
+
   const handleSubmit = React.useCallback(
     async (text: string) => {
       setInput("");
       if (!active) {
-        // Hero: create the chat, then generate the first model.
+        // Hero: create the chat (title only — no duplicate first message), then interview.
         try {
-          const chat = await api.createChat({ prompt: text });
+          const chat = await api.createChat({ title: text.slice(0, 60) });
           setActive(chat);
           await refreshChats();
-          await generate(chat.id, text);
+          await interview(chat.id, text);
         } catch (e) {
           setError(e instanceof Error ? e.message : String(e));
         }
         return;
       }
-      // Existing chat with a model → refine; otherwise (re)generate.
+      // Model exists → refine; mid-interview / pre-model → another clarify turn.
       if (active.current_stl) await refine(active.id, text);
-      else await generate(active.id, text);
+      else await interview(active.id, text);
     },
-    [active, generate, refine, refreshChats],
+    [active, interview, refine, refreshChats],
   );
+
+  // "Skip & generate now" — bypass further questions, generate from the brief so far.
+  const skipToGenerate = React.useCallback(async () => {
+    if (!active) return;
+    const brief =
+      active.messages
+        .filter((m) => m.role === "user")
+        .map((m) => m.content)
+        .join("\n") || active.title;
+    await generate(active.id, brief);
+  }, [active, generate]);
 
   const slice = React.useCallback(async () => {
     if (!active) return;
@@ -244,8 +278,20 @@ export function ChatWorkspace() {
                     {active.messages.map((m, i) => (
                       <MessageBubble key={i} message={m} onQuickReply={handleSubmit} />
                     ))}
+                    {interviewing ? (
+                      <p className="text-sm text-muted-foreground">Thinking about your request…</p>
+                    ) : null}
                     {generating ? (
                       <p className="text-sm text-muted-foreground">Generating your model…</p>
+                    ) : null}
+                    {!active.current_stl && !generating && !interviewing && active.messages.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={skipToGenerate}
+                        className="self-start text-xs font-medium text-primary hover:underline"
+                      >
+                        Skip questions & generate now →
+                      </button>
                     ) : null}
                     <div ref={threadEndRef} />
                   </div>
@@ -256,7 +302,7 @@ export function ChatWorkspace() {
                       value={input}
                       onChange={setInput}
                       onSubmit={handleSubmit}
-                      busy={generating}
+                      busy={generating || interviewing}
                       variant="inline"
                     />
                   </div>
@@ -273,7 +319,7 @@ export function ChatWorkspace() {
                     value={input}
                     onChange={setInput}
                     onSubmit={handleSubmit}
-                    busy={generating}
+                    busy={generating || interviewing}
                     variant="hero"
                   />
                 </div>
