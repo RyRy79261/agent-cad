@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import type { BuildVolume, Chat, Printer, SettingsDescriptor, Settings } from "@agent-cad/types";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Upload } from "lucide-react";
 
 import * as api from "@/lib/api";
 import {
@@ -46,6 +46,7 @@ export function ChatWorkspace() {
   const [error, setError] = React.useState<string | null>(null);
 
   const threadEndRef = React.useRef<HTMLDivElement>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // --- initial load -------------------------------------------------------- //
   React.useEffect(() => {
@@ -217,6 +218,30 @@ export function ChatWorkspace() {
     await generate(active.id, brief);
   }, [active, generate]);
 
+  // Import an STL: validate server-side, then attach into a chat as its current model (FR-IMP-1).
+  const importFile = React.useCallback(
+    async (file: File) => {
+      setGenerating(true);
+      setTab("model");
+      setError(null);
+      try {
+        const res = await api.importStl(file);
+        const chatId = active?.id ?? (await api.createChat({ title: file.name })).id;
+        const updated = await api.attachImport(chatId, res.id);
+        setActive(updated);
+        await refreshChats();
+        if (!res.fits_build_volume) {
+          setError(`Imported, but it doesn't fit the bed (${res.bbox.x}×${res.bbox.y}×${res.bbox.z} mm).`);
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setGenerating(false);
+      }
+    },
+    [active, refreshChats],
+  );
+
   const slice = React.useCallback(async () => {
     if (!active) return;
     setSlicing(true);
@@ -253,6 +278,17 @@ export function ChatWorkspace() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".stl"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = ""; // allow re-importing the same file
+          if (file) void importFile(file);
+        }}
+      />
       <Sidebar
         chats={chats}
         activeId={active?.id ?? null}
@@ -322,6 +358,15 @@ export function ChatWorkspace() {
                     busy={generating || interviewing}
                     variant="hero"
                   />
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={generating || interviewing}
+                    className="mt-4 inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                    or import an STL file
+                  </button>
                 </div>
               </div>
             )}
