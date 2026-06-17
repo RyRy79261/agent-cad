@@ -16,10 +16,23 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.request
 
 from cad.generate.base import Driver, Message
+
+# Substrings that mark a transient (retryable) LLM failure rather than a fatal one.
+_RETRYABLE_HINTS = (
+    "connection closed", "connection error", "connection reset", "econnreset",
+    "try again", "overloaded", "rate limit", "429", "529", "503",
+    "timeout", "timed out", "service unavailable", "internal server error",
+)
+
+
+def _is_retryable(message: str) -> bool:
+    m = message.lower()
+    return any(hint in m for hint in _RETRYABLE_HINTS)
 
 # Default models per backend. Claude Code resolves "the latest" itself when None;
 # the API path pins Opus 4.8 (best for code-gen); Ollama needs a locally-pulled tag.
@@ -66,26 +79,36 @@ class ClaudeCodeDriver:
             cmd += ["--model", self.model]
         if self.effort:
             cmd += ["--effort", self.effort]
-        # Force UTF-8 (don't trust the process locale): the CLI emits JSON whose
-        # `result` echoes model.py, routinely containing non-ASCII (em-dashes, →, °).
-        # `text=True` alone would decode with the locale encoding — ASCII on a bare
-        # locale — and crash with UnicodeDecodeError. `errors="replace"` is a backstop.
-        proc = subprocess.run(  # noqa: S603 - args are controlled, not shell-interpolated
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=self.timeout,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"claude CLI exited {proc.returncode}: {(proc.stderr or proc.stdout).strip()[:500]}"
+        # Retry transient API failures (the CLI surfaces "Connection closed … Try again",
+        # overloaded/429/529, timeouts on long high-effort runs) — they're flaky, not fatal.
+        retries = int(os.environ.get("AGENT_CAD_CLAUDE_RETRIES", "3"))
+        last = "no output"
+        for attempt in range(retries):
+            # Force UTF-8 (don't trust the process locale): the CLI emits JSON whose
+            # `result` echoes model.py, routinely containing non-ASCII (em-dashes, →, °).
+            # `text=True` alone would decode with the locale encoding — ASCII on a bare
+            # locale — and crash with UnicodeDecodeError. `errors="replace"` is a backstop.
+            proc = subprocess.run(  # noqa: S603 - args are controlled, not shell-interpolated
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=self.timeout,
             )
-        payload = json.loads(proc.stdout)
-        if payload.get("is_error"):
-            raise RuntimeError(f"claude CLI error: {payload.get('result', payload)}")
-        return payload["result"]
+            # The CLI emits a JSON envelope even on error (--output-format json).
+            try:
+                payload = json.loads(proc.stdout) if proc.stdout.strip() else {}
+            except json.JSONDecodeError:
+                payload = {}
+            if proc.returncode == 0 and payload and not payload.get("is_error"):
+                return payload["result"]
+            last = str(payload.get("result") or proc.stderr or proc.stdout or "").strip()[:500]
+            if attempt < retries - 1 and _is_retryable(last):
+                time.sleep(3 * (attempt + 1))  # brief backoff; transient drops clear fast
+                continue
+            break
+        raise RuntimeError(f"claude CLI error: {last}")
 
 
 class AnthropicDriver:

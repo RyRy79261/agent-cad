@@ -133,6 +133,46 @@ def test_claude_code_decodes_utf8_and_passes_model_effort(monkeypatch: pytest.Mo
     assert "--effort" in captured["cmd"] and "medium" in captured["cmd"]
 
 
+def test_claude_code_retries_transient_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dropped connection ('Connection closed … Try again') is transient — retry, don't fail."""
+    from types import SimpleNamespace
+
+    import cad.generate.drivers as drivers_mod
+
+    n = {"calls": 0}
+
+    def fake_run(cmd, **kwargs):
+        n["calls"] += 1
+        if n["calls"] == 1:  # first attempt: the exact transient failure the user hit
+            msg = "API Error: Connection closed while thinking, before producing a response. Try again."
+            return SimpleNamespace(returncode=1, stdout=json.dumps({"is_error": True, "result": msg}), stderr="")
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"is_error": False, "result": "x = 1"}), stderr="")
+
+    monkeypatch.setattr(drivers_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(drivers_mod.time, "sleep", lambda *_: None)
+    out = ClaudeCodeDriver().complete("sys", [Message("user", "hi")])
+    assert out == "x = 1" and n["calls"] == 2  # retried once, then succeeded
+
+
+def test_claude_code_does_not_retry_fatal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    import cad.generate.drivers as drivers_mod
+
+    n = {"calls": 0}
+
+    def fake_run(cmd, **kwargs):
+        n["calls"] += 1
+        body = json.dumps({"is_error": True, "result": "Invalid model id: bogus"})
+        return SimpleNamespace(returncode=1, stdout=body, stderr="")
+
+    monkeypatch.setattr(drivers_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(drivers_mod.time, "sleep", lambda *_: None)
+    with pytest.raises(RuntimeError, match="Invalid model id"):
+        ClaudeCodeDriver().complete("sys", [Message("user", "hi")])
+    assert n["calls"] == 1  # non-transient → no retry
+
+
 # --- orchestration loop ------------------------------------------------------
 
 def test_generate_succeeds_first_round(tmp_path: Path) -> None:

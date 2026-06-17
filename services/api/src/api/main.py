@@ -522,9 +522,15 @@ def slice_generated(name: str, settings: SliceSettings | None = None) -> JobRef:
 def _narrate_build(payload: dict) -> str:
     """A short, templated (no-LLM) summary of a build result for the chat thread."""
     if not payload.get("ok"):
-        return "I couldn't produce a printable model — " + (
-            payload.get("error") or "have a look at the attempts."
-        )
+        err = payload.get("error") or ""
+        low = err.lower()
+        if any(h in low for h in ("connection closed", "try again", "overloaded", "connection error", "timed out")):
+            return (
+                "The model service dropped the connection mid-generation — this happens on long, "
+                "high-effort runs. I retried a few times without luck. Please try again, or switch to "
+                "Sonnet · Medium in the model dropdown for a faster, more reliable response."
+            )
+        return "I couldn't produce a printable model — " + (err or "have a look at the attempts.")
     build = payload.get("build") or {}
     meta = build.get("metadata") or {}
     bbox = meta.get("bounding_box_mm")
