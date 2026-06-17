@@ -94,6 +94,32 @@ def test_anthropic_unavailable_without_key(monkeypatch: pytest.MonkeyPatch) -> N
     assert usable is False and reason
 
 
+def test_claude_code_decodes_utf8_and_passes_model_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: the CLI's JSON echoes model.py with non-ASCII (— → °); decoding it
+    must be UTF-8, not the process locale (which crashed with UnicodeDecodeError), and
+    --model / --effort must reach the command."""
+    from types import SimpleNamespace
+
+    import cad.generate.drivers as drivers_mod
+
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        body = json.dumps({"is_error": False, "result": "x = 1  # smooth lattice — 45° chamfer →"})
+        return SimpleNamespace(returncode=0, stdout=body, stderr="")
+
+    monkeypatch.setattr(drivers_mod.subprocess, "run", fake_run)
+    drv = ClaudeCodeDriver(model="claude-sonnet-4-6", effort="medium")
+    out = drv.complete("system —", [Message("user", "smooth the L-brackets — round 90° joints")])
+
+    assert "—" in out and "→" in out and "°" in out  # non-ASCII round-trips
+    assert captured["kwargs"].get("encoding") == "utf-8"  # locale-independent decode
+    assert "--model" in captured["cmd"] and "claude-sonnet-4-6" in captured["cmd"]
+    assert "--effort" in captured["cmd"] and "medium" in captured["cmd"]
+
+
 # --- orchestration loop ------------------------------------------------------
 
 def test_generate_succeeds_first_round(tmp_path: Path) -> None:

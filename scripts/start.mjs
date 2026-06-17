@@ -54,8 +54,12 @@ function shutdown(code = 0) {
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
-// API: FastAPI on :8420
-run("api", "uv", ["run", "--package", "apiserver", "uvicorn", "api.main:app", "--port", "8420"]);
+// API: FastAPI on :8420. Force Python UTF-8 mode so a bare/ASCII shell locale can't
+// make subprocess pipes or file IO default to ASCII (which crashed model generation
+// on non-ASCII CLI output). The driver also pins UTF-8 itself; this is belt-and-suspenders.
+run("api", "uv", ["run", "--package", "apiserver", "uvicorn", "api.main:app", "--port", "8420"], {
+  env: { ...process.env, PYTHONUTF8: "1" },
+});
 // Web: Next.js on :3420 (the port is baked into the web `dev` script)
 run("web", "pnpm", ["-C", "apps/web", "dev"]);
 

@@ -66,8 +66,17 @@ class ClaudeCodeDriver:
             cmd += ["--model", self.model]
         if self.effort:
             cmd += ["--effort", self.effort]
+        # Force UTF-8 (don't trust the process locale): the CLI emits JSON whose
+        # `result` echoes model.py, routinely containing non-ASCII (em-dashes, →, °).
+        # `text=True` alone would decode with the locale encoding — ASCII on a bare
+        # locale — and crash with UnicodeDecodeError. `errors="replace"` is a backstop.
         proc = subprocess.run(  # noqa: S603 - args are controlled, not shell-interpolated
-            cmd, capture_output=True, text=True, timeout=self.timeout
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=self.timeout,
         )
         if proc.returncode != 0:
             raise RuntimeError(
