@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Sidebar } from "./sidebar";
 import { Composer } from "./composer";
+import { ModelSelector } from "./model-selector";
 import { MessageBubble } from "./message-bubble";
 import { StatusBadge } from "./status-badge";
 import { Stepper } from "./stepper";
@@ -31,6 +32,17 @@ import type { SettingsValues } from "@/components/settings/settings-form";
 /** Refine suggestions shown above the composer once a model exists (design: "Quick Edits"). */
 const QUICK_EDITS = ["Make the base wider", "Steeper angle", "Thicken the lip"];
 const HOW_IT_WORKS = ["Describe", "Refine", "Slice & print"];
+
+/** Generate/refine can take minutes at high effort — poll long before giving up (FR-CHAT-13). */
+const LONG_POLL = { timeoutMs: 600_000 };
+
+/** Friendly message for a poll timeout — the job keeps running server-side, so don't alarm. */
+function describeError(e: unknown): string {
+  if (e instanceof api.ApiError && e.status === 408) {
+    return "Still working — complex parts can take a few minutes at higher effort. It keeps generating in the background; reopen this chat shortly to see it, or pick a faster model / lower effort.";
+  }
+  return e instanceof Error ? e.message : String(e);
+}
 
 /**
  * The chat workspace: 3-pane shell (sidebar | thread+composer | viewer-over-
@@ -145,11 +157,12 @@ export function ChatWorkspace() {
       setTab("model");
       setError(null);
       try {
-        await api.runJob(() => api.chatGenerate(chatId, prompt));
+        await api.runJob(() => api.chatGenerate(chatId, prompt), LONG_POLL);
         setActive(await api.getChat(chatId));
         await refreshChats();
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(describeError(e));
+        await refreshChats();
       } finally {
         setGenerating(false);
       }
@@ -163,11 +176,12 @@ export function ChatWorkspace() {
       setTab("model");
       setError(null);
       try {
-        await api.runJob(() => api.chatRefine(chatId, instruction));
+        await api.runJob(() => api.chatRefine(chatId, instruction), LONG_POLL);
         setActive(await api.getChat(chatId));
         await refreshChats();
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(describeError(e));
+        await refreshChats();
       } finally {
         setGenerating(false);
       }
@@ -293,6 +307,19 @@ export function ChatWorkspace() {
     [],
   );
 
+  // Persist a model/effort change (optimistic) — drives generate / interview / refine.
+  const updateAi = React.useCallback(
+    async (patch: Partial<Settings>) => {
+      setSettings((prev) => {
+        if (!prev) return prev;
+        const next = { ...prev, ...patch };
+        void api.updateSettings(next).catch((e) => setError(e instanceof Error ? e.message : String(e)));
+        return next;
+      });
+    },
+    [],
+  );
+
   return (
     <div className="flex h-screen overflow-hidden bg-background text-foreground">
       <input
@@ -322,8 +349,17 @@ export function ChatWorkspace() {
             <h1 className="truncate text-sm font-semibold">{active?.title ?? "New chat"}</h1>
             {active ? <StatusBadge status={status} /> : null}
           </div>
-          {active ? (
-            <div className="flex shrink-0 items-center gap-0.5">
+          <div className="flex shrink-0 items-center gap-1.5">
+            {settings ? (
+              <ModelSelector
+                model={settings.active_model}
+                effort={settings.effort}
+                onChange={updateAi}
+                disabled={busy}
+              />
+            ) : null}
+            {active ? (
+              <div className="flex items-center gap-0.5">
               <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" title="New chat" onClick={newChat}>
                 <SquarePen className="h-4 w-4" />
               </Button>
@@ -349,8 +385,9 @@ export function ChatWorkspace() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-            </div>
-          ) : null}
+              </div>
+            ) : null}
+          </div>
         </header>
 
         <div className="flex min-h-0 flex-1">

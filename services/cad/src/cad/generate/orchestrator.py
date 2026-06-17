@@ -72,6 +72,7 @@ def generate_part(
     *,
     driver: str | Driver | None = None,
     model: str | None = None,
+    effort: str | None = None,
     max_rounds: int = 2,
     verify: bool = True,
     formats: tuple[str, ...] = DEFAULT_FORMATS,
@@ -92,7 +93,9 @@ def generate_part(
     slice path serves templates and generated parts alike.
     """
     try:
-        drv: Driver = driver if isinstance(driver, Driver) else resolve_driver(driver, model=model)
+        drv: Driver = (
+            driver if isinstance(driver, Driver) else resolve_driver(driver, model=model, effort=effort)
+        )
     except ValueError as exc:
         return GenerateResult(
             ok=False, driver=str(driver), description=description, dest=str(dest),

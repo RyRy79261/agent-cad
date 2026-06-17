@@ -32,12 +32,15 @@ class ClaudeCodeDriver:
 
     name = "claude-code"
 
-    def __init__(self, model: str | None = None) -> None:
-        # None → let the CLI use the session's default model. A value maps to
-        # `--model` (an alias like "opus" or a full id both work).
+    def __init__(self, model: str | None = None, effort: str | None = None) -> None:
+        # None → let the CLI use the session's default. A value maps to `--model`
+        # (alias like "opus" or a full id) / `--effort` (low|medium|high|xhigh|max).
+        # Passing these EXPLICITLY also stops the spawned `claude -p` from inheriting
+        # a stray CLAUDE_EFFORT from the parent process.
         self.model = model
+        self.effort = effort
         self.bin = os.environ.get("AGENT_CAD_CLAUDE_BIN", "claude")
-        self.timeout = int(os.environ.get("AGENT_CAD_CLAUDE_TIMEOUT", "300"))
+        self.timeout = int(os.environ.get("AGENT_CAD_CLAUDE_TIMEOUT", "600"))
 
     def available(self) -> tuple[bool, str]:
         if shutil.which(self.bin) is None:
@@ -61,6 +64,8 @@ class ClaudeCodeDriver:
         ]
         if self.model:
             cmd += ["--model", self.model]
+        if self.effort:
+            cmd += ["--effort", self.effort]
         proc = subprocess.run(  # noqa: S603 - args are controlled, not shell-interpolated
             cmd, capture_output=True, text=True, timeout=self.timeout
         )
@@ -79,8 +84,9 @@ class AnthropicDriver:
 
     name = "anthropic"
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(self, model: str | None = None, effort: str | None = None) -> None:
         self.model = model or os.environ.get("AGENT_CAD_ANTHROPIC_MODEL", _DEFAULT_ANTHROPIC_MODEL)
+        self.effort = effort
         self.max_tokens = int(os.environ.get("AGENT_CAD_ANTHROPIC_MAX_TOKENS", "8000"))
 
     def available(self) -> tuple[bool, str]:
@@ -119,8 +125,9 @@ class OllamaDriver:
 
     name = "ollama"
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(self, model: str | None = None, effort: str | None = None) -> None:
         self.model = model or os.environ.get("AGENT_CAD_OLLAMA_MODEL", _DEFAULT_OLLAMA_MODEL)
+        self.effort = effort  # accepted for a uniform driver signature; not used by Ollama
         self.host = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
         self.timeout = int(os.environ.get("AGENT_CAD_OLLAMA_TIMEOUT", "600"))
 
@@ -172,7 +179,7 @@ _REGISTRY: dict[str, type] = {
 DRIVER_NAMES = ("claude-code", "anthropic", "ollama")
 
 
-def resolve_driver(name: str | None = None, *, model: str | None = None) -> Driver:
+def resolve_driver(name: str | None = None, *, model: str | None = None, effort: str | None = None) -> Driver:
     """Pick a driver: explicit ``name`` > ``$AGENT_CAD_LLM_DRIVER`` > ``claude-code``."""
     chosen = (name or os.environ.get("AGENT_CAD_LLM_DRIVER") or "claude-code").strip().lower()
     factory = _REGISTRY.get(chosen)
@@ -180,4 +187,4 @@ def resolve_driver(name: str | None = None, *, model: str | None = None) -> Driv
         raise ValueError(
             f"unknown LLM driver {chosen!r}. Available: {', '.join(DRIVER_NAMES)}"
         )
-    return factory(model=model)
+    return factory(model=model, effort=effort)

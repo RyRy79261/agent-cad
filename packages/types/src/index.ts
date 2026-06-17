@@ -200,9 +200,10 @@ export const Printer = z.object({
 });
 export type Printer = z.infer<typeof Printer>;
 
-/** App settings persisted to `~/.agent-cad/settings.json` — mirrors `Settings`. No `effort` (generation runs at max). */
+/** App settings persisted to `~/.agent-cad/settings.json` — mirrors `Settings`. `active_model`+`effort` drive the LLM driver (`--model`/`--effort`). */
 export const Settings = z.object({
   active_model: z.string().default("claude-opus-4-8"),
+  effort: z.enum(["low", "medium", "high", "xhigh", "max"]).default("high"),
   default_printer_id: z.string().nullish(),
   storage_location: z.string().nullish(),
   theme: z.string().default("system"),

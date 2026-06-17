@@ -686,15 +686,20 @@ def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
     save_chat(store, chat)
     art_dir = store.artifacts_dir(chat_id)
     prompt = body.prompt
+    _settings = load_settings(store)
+    sel_model, sel_effort = _settings.active_model, _settings.effort
 
     def work() -> dict:
         from cad.generate import generate_part
 
-        # claude-code driver (the user's Claude subscription, no metered API key):
-        # driver=None → $AGENT_CAD_LLM_DRIVER, default "claude-code".
+        # claude-code driver (the user's Claude subscription, no metered API key);
+        # model + effort come from settings and are passed EXPLICITLY so generation
+        # doesn't inherit a stray CLAUDE_EFFORT from the launching shell.
         result = generate_part(
             prompt,
             art_dir,
+            model=sel_model,
+            effort=sel_effort,
             max_rounds=2,
             verify=True,
             name="model",
@@ -717,11 +722,14 @@ def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
     assert chat is not None
     rounds = sum(1 for m in chat.messages if m.role == "assistant" and m.quick_replies is not None)
     brief = "\n".join(m.content for m in chat.messages if m.role == "user")
+    _settings = load_settings(store)
+    sel_model, sel_effort = _settings.active_model, _settings.effort
 
     def work() -> dict:
         from api.interview import interview_turn
 
-        result = interview_turn(brief)  # default driver: claude-code (subscription)
+        # claude-code (subscription); model + effort from settings, passed explicitly.
+        result = interview_turn(brief, model=sel_model, effort=sel_effort)
         ready = result.get("status") != "question" or rounds >= 6  # cap at 6 questions
         c = get_chat(store, chat_id)
         if c is not None:
@@ -764,6 +772,8 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
     chat.status = "generating"
     save_chat(store, chat)
     instruction = body.instruction
+    _settings = load_settings(store)
+    sel_model, sel_effort = _settings.active_model, _settings.effort
 
     def work() -> dict:
         import shutil
@@ -785,7 +795,7 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
             "Return the COMPLETE updated model.py (edit, do not start over)."
         )
         result = generate_part(
-            augmented, art_dir, max_rounds=2,
+            augmented, art_dir, model=sel_model, effort=sel_effort, max_rounds=2,
             verify=True, name="model", out_dir=str(art_dir),
         )
         return _attach_build_to_chat(chat_id, result)
