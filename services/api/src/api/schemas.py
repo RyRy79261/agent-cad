@@ -170,6 +170,9 @@ class Message(BaseModel):
     ts: float = 0.0
     quick_replies: list[str] | None = None
     artifact_refs: list[ArtifactRef] = Field(default_factory=list)
+    # Assistant-turn telemetry: token usage (input/output/cache) + wall-clock duration.
+    usage: dict[str, int] | None = None
+    duration_ms: float | None = None
 
 
 class Chat(BaseModel):

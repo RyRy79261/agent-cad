@@ -44,6 +44,7 @@ class GenerateResult:
     model_path: str | None = None
     source: str | None = None
     summary: str | None = None  # the model's plain-language `# SUMMARY:` chat reply
+    usage: dict[str, int] | None = None  # token usage summed across all rounds
     build: dict[str, Any] | None = None  # final BuildResult.to_dict()
     error: str | None = None
 
@@ -125,6 +126,7 @@ def generate_part(
         return result
 
     last_build: BuildResult | None = None
+    total_usage = {"input_tokens": 0, "cache_creation_tokens": 0, "cache_read_tokens": 0, "output_tokens": 0}
     for round_no in range(max_rounds + 1):
         result.rounds = round_no + 1
         try:
@@ -133,6 +135,12 @@ def generate_part(
             result.error = f"LLM backend error ({drv.name}): {exc}"
             result.attempts.append(Attempt(round_no + 1, False, None, str(exc)[:200]))
             return result
+
+        u = getattr(drv, "last_usage", None)
+        if u:
+            for k in total_usage:
+                total_usage[k] += int(u.get(k, 0) or 0)
+        result.usage = dict(total_usage)
 
         source = strip_code_fences(reply)
         model_path.write_text(source, encoding="utf-8")

@@ -612,7 +612,7 @@ def _resolve_filament_settings(chat: Chat, body: ChatSliceIn | None) -> SliceSet
     return SliceSettings()
 
 
-def _attach_build_to_chat(chat_id: str, result_obj: object) -> dict:
+def _attach_build_to_chat(chat_id: str, result_obj: object, duration_ms: float | None = None) -> dict:
     """Record a generate/refine build's artifacts on the chat + post a narration turn."""
     payload = result_obj.to_dict()  # type: ignore[attr-defined]
     build = getattr(result_obj, "build", None) or {}
@@ -635,7 +635,10 @@ def _attach_build_to_chat(chat_id: str, result_obj: object) -> dict:
             c.current_stl = stl_name
         c.status = "model-ready" if payload.get("ok") else "new"
         save_chat(store, c)
-        append_message(store, chat_id, "assistant", _narrate_build(payload), artifact_refs=refs)
+        append_message(
+            store, chat_id, "assistant", _narrate_build(payload), artifact_refs=refs,
+            usage=payload.get("usage"), duration_ms=duration_ms,
+        )
     return payload
 
 
@@ -702,11 +705,14 @@ def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
     sel_model, sel_effort = _settings.active_model, _settings.effort
 
     def work() -> dict:
+        import time
+
         from cad.generate import generate_part
 
         # claude-code driver (the user's Claude subscription, no metered API key);
         # model + effort come from settings and are passed EXPLICITLY so generation
         # doesn't inherit a stray CLAUDE_EFFORT from the launching shell.
+        t0 = time.monotonic()
         result = generate_part(
             prompt,
             art_dir,
@@ -717,7 +723,7 @@ def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
             name="model",
             out_dir=str(art_dir),
         )
-        return _attach_build_to_chat(chat_id, result)
+        return _attach_build_to_chat(chat_id, result, duration_ms=(time.monotonic() - t0) * 1000)
 
     job = jobs.submit("cad.generate", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
@@ -738,10 +744,14 @@ def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
     sel_model, sel_effort = _settings.active_model, _settings.effort
 
     def work() -> dict:
+        import time
+
         from api.interview import interview_turn
 
         # claude-code (subscription); model + effort from settings, passed explicitly.
+        t0 = time.monotonic()
         result = interview_turn(brief, model=sel_model, effort=sel_effort)
+        dur_ms = (time.monotonic() - t0) * 1000
         ready = result.get("status") != "question" or rounds >= 6  # cap at 6 questions
         c = get_chat(store, chat_id)
         if c is not None:
@@ -749,6 +759,7 @@ def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
                 append_message(
                     store, chat_id, "assistant", result["question"],
                     quick_replies=result.get("suggestions") or [],
+                    usage=result.get("usage"), duration_ms=dur_ms,
                 )
                 c2 = get_chat(store, chat_id)
                 if c2 is not None:
@@ -789,9 +800,11 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
 
     def work() -> dict:
         import shutil
+        import time
 
         from cad.generate import generate_part
 
+        t_refine0 = time.monotonic()
         prior_py = art_dir / "model.py"
         # Keep every version: snapshot the prior source before overwriting (refine v<N>).
         hist = art_dir / "history"
@@ -813,7 +826,7 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
             augmented, art_dir, model=sel_model, effort=sel_effort, max_rounds=2,
             verify=True, name="model", out_dir=str(art_dir),
         )
-        return _attach_build_to_chat(chat_id, result)
+        return _attach_build_to_chat(chat_id, result, duration_ms=(time.monotonic() - t_refine0) * 1000)
 
     job = jobs.submit("cad.refine", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)

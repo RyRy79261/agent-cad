@@ -269,6 +269,9 @@ export const Message = z.object({
   ts: z.number().default(0),
   quick_replies: z.array(z.string()).nullish(),
   artifact_refs: z.array(ArtifactRef).default([]),
+  /** Assistant-turn telemetry: token usage (input/output/cache) + wall-clock ms. */
+  usage: z.record(z.string(), z.number()).nullish(),
+  duration_ms: z.number().nullish(),
 });
 export type Message = z.infer<typeof Message>;
 

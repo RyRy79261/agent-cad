@@ -64,4 +64,6 @@ def interview_turn(
         reply = drv.complete(INTERVIEW_SYSTEM, [Message("user", user)])
     except Exception as exc:  # noqa: BLE001 - any backend failure must not block intake
         return {"status": "ready", "reason": f"interview error: {exc}"}
-    return _parse_interview(reply)
+    result = _parse_interview(reply)
+    result["usage"] = getattr(drv, "last_usage", None)
+    return result

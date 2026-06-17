@@ -34,6 +34,18 @@ def _is_retryable(message: str) -> bool:
     m = message.lower()
     return any(hint in m for hint in _RETRYABLE_HINTS)
 
+
+def _usage_from(payload: dict) -> dict[str, int]:
+    """Normalise the CLI's token-usage block. The (large, cached) system prompt lands in
+    cache_creation on the first call and cache_read after — both count as input."""
+    u = payload.get("usage") or {}
+    return {
+        "input_tokens": int(u.get("input_tokens", 0) or 0),
+        "cache_creation_tokens": int(u.get("cache_creation_input_tokens", 0) or 0),
+        "cache_read_tokens": int(u.get("cache_read_input_tokens", 0) or 0),
+        "output_tokens": int(u.get("output_tokens", 0) or 0),
+    }
+
 # Default models per backend. Claude Code resolves "the latest" itself when None;
 # the API path pins Opus 4.8 (best for code-gen); Ollama needs a locally-pulled tag.
 _DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8"
@@ -54,6 +66,7 @@ class ClaudeCodeDriver:
         self.effort = effort
         self.bin = os.environ.get("AGENT_CAD_CLAUDE_BIN", "claude")
         self.timeout = int(os.environ.get("AGENT_CAD_CLAUDE_TIMEOUT", "600"))
+        self.last_usage: dict[str, int] | None = None  # token usage of the most recent call
 
     def available(self) -> tuple[bool, str]:
         if shutil.which(self.bin) is None:
@@ -102,6 +115,7 @@ class ClaudeCodeDriver:
             except json.JSONDecodeError:
                 payload = {}
             if proc.returncode == 0 and payload and not payload.get("is_error"):
+                self.last_usage = _usage_from(payload)
                 return payload["result"]
             last = str(payload.get("result") or proc.stderr or proc.stdout or "").strip()[:500]
             if attempt < retries - 1 and _is_retryable(last):

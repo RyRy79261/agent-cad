@@ -76,6 +76,18 @@ def test_generate_captures_summary(tmp_path: Path) -> None:
     assert result.ok and result.summary == "a smooth gyroid-infilled shelf with filleted brackets"
 
 
+def test_generate_captures_token_usage(tmp_path: Path) -> None:
+    drv = FakeDriver([GOOD_SOURCE])
+    drv.last_usage = {  # type: ignore[attr-defined]
+        "input_tokens": 9, "cache_creation_tokens": 6491, "cache_read_tokens": 800, "output_tokens": 450,
+    }
+    result = generate_part("a cube", tmp_path / "p", driver=drv)
+    assert result.ok
+    assert result.usage == {
+        "input_tokens": 9, "cache_creation_tokens": 6491, "cache_read_tokens": 800, "output_tokens": 450,
+    }
+
+
 # --- driver resolution -------------------------------------------------------
 
 def test_resolve_default_is_claude_code() -> None:
