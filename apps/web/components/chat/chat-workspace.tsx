@@ -24,6 +24,7 @@ import { Sidebar } from "./sidebar";
 import { Composer } from "./composer";
 import { ModelSelector } from "./model-selector";
 import { MessageBubble } from "./message-bubble";
+import { WorkingIndicator, formatElapsed } from "./working-indicator";
 import { StatusBadge } from "./status-badge";
 import { Stepper } from "./stepper";
 import { PrintSettingsPanel } from "./print-settings-panel";
@@ -65,10 +66,17 @@ export function ChatWorkspace() {
   const [input, setInput] = React.useState("");
   const [tab, setTab] = React.useState<ViewerTab>("model");
   const [showPreview, setShowPreview] = React.useState(true);
+  const [railWidth, setRailWidth] = React.useState(400);
   const [generating, setGenerating] = React.useState(false);
   const [interviewing, setInterviewing] = React.useState(false);
   const [slicing, setSlicing] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  // Optimistic message + live "working" timer: show the user's message instantly,
+  // then a ticking elapsed counter while the model runs (asks #2/#3).
+  const [pendingText, setPendingText] = React.useState<string | null>(null);
+  const [workStartedAt, setWorkStartedAt] = React.useState<number | null>(null);
+  const [lastDurationMs, setLastDurationMs] = React.useState<number | null>(null);
 
   const threadEndRef = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
@@ -106,7 +114,18 @@ export function ChatWorkspace() {
 
   React.useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [active?.messages.length, generating, interviewing, slicing]);
+  }, [active?.messages.length, generating, interviewing, slicing, pendingText]);
+
+  // Drag-resizable preview rail, persisted across reloads.
+  React.useEffect(() => {
+    void (async () => {
+      const saved = Number(localStorage.getItem("agentcad:railWidth"));
+      if (saved >= 320 && saved <= 1200) setRailWidth(saved);
+    })();
+  }, []);
+  React.useEffect(() => {
+    localStorage.setItem("agentcad:railWidth", String(Math.round(railWidth)));
+  }, [railWidth]);
 
   const refreshChats = React.useCallback(async () => {
     try {
@@ -215,21 +234,29 @@ export function ChatWorkspace() {
   const handleSubmit = React.useCallback(
     async (text: string) => {
       setInput("");
-      if (!active) {
-        // Hero: create the chat (title only — no duplicate first message), then interview.
-        try {
+      setLastDurationMs(null);
+      const startedAt = Date.now();
+      setPendingText(text); // show the user's message instantly
+      setWorkStartedAt(startedAt); // start the live timer
+      try {
+        if (!active) {
+          // Hero: create the chat (title only — no duplicate first message), then interview.
           const chat = await api.createChat({ title: text.slice(0, 60) });
           setActive(chat);
           await refreshChats();
           await interview(chat.id, text);
-        } catch (e) {
-          setError(e instanceof Error ? e.message : String(e));
+        } else if (active.current_stl) {
+          await refine(active.id, text); // model exists → refine
+        } else {
+          await interview(active.id, text); // mid-interview / pre-model → another clarify turn
         }
-        return;
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setLastDurationMs(Date.now() - startedAt); // "took Xm Ys"
+        setWorkStartedAt(null);
+        setPendingText(null);
       }
-      // Model exists → refine; mid-interview / pre-model → another clarify turn.
-      if (active.current_stl) await refine(active.id, text);
-      else await interview(active.id, text);
     },
     [active, interview, refine, refreshChats],
   );
@@ -307,6 +334,25 @@ export function ChatWorkspace() {
     (key: string, value: unknown) => setSliceValues((v) => ({ ...v, [key]: value })),
     [],
   );
+
+  // Drag the divider to resize the preview rail (clamped so neither pane collapses).
+  const startResize = React.useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const onMove = (ev: MouseEvent) => {
+      const w = window.innerWidth - ev.clientX;
+      setRailWidth(Math.min(Math.max(w, 320), Math.max(360, window.innerWidth - 420)));
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
+    };
+    document.body.style.userSelect = "none";
+    document.body.style.cursor = "col-resize";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, []);
 
   // Persist a model/effort change (optimistic) — drives generate / interview / refine.
   const updateAi = React.useCallback(
@@ -401,13 +447,22 @@ export function ChatWorkspace() {
                     {active.messages.map((m, i) => (
                       <MessageBubble key={i} message={m} />
                     ))}
-                    {interviewing ? (
-                      <p className="text-sm text-muted-foreground">Thinking about your request…</p>
+                    {/* optimistic: show the just-sent message + a live working timer */}
+                    {busy && pendingText ? (
+                      <MessageBubble message={{ role: "user", content: pendingText, ts: 0, artifact_refs: [] }} />
                     ) : null}
-                    {generating ? (
-                      <p className="text-sm text-muted-foreground">Generating your model…</p>
+                    {busy && workStartedAt ? (
+                      <WorkingIndicator
+                        label={generating ? "Generating your model" : "Thinking about your request"}
+                        startedAt={workStartedAt}
+                      />
                     ) : null}
-                    {!active.current_stl && !generating && !interviewing && active.messages.length > 0 ? (
+                    {!busy && lastDurationMs != null ? (
+                      <p className="text-center text-xs text-subtle-foreground">
+                        Took {formatElapsed(lastDurationMs / 1000)}
+                      </p>
+                    ) : null}
+                    {!active.current_stl && !busy && active.messages.length > 0 ? (
                       <button
                         type="button"
                         onClick={skipToGenerate}
@@ -485,9 +540,18 @@ export function ChatWorkspace() {
             )}
           </main>
 
-          {/* viewer-over-settings rail */}
+          {/* drag handle + viewer-over-settings rail (resizable) */}
           {showPreview ? (
-          <div className="flex w-[400px] shrink-0 flex-col gap-4 overflow-y-auto border-l p-4">
+          <>
+          <div
+            onMouseDown={startResize}
+            title="Drag to resize"
+            className="w-1 shrink-0 cursor-col-resize bg-border transition-colors hover:bg-primary"
+          />
+          <div
+            style={{ width: railWidth }}
+            className="flex shrink-0 flex-col gap-4 overflow-y-auto p-4"
+          >
             <ViewerPanel
               className="min-h-[300px]"
               stlUrl={stlUrl}
@@ -524,6 +588,7 @@ export function ChatWorkspace() {
               onDownload={gcodeUrl ? () => window.open(gcodeUrl, "_blank") : undefined}
             />
           </div>
+          </>
           ) : null}
         </div>
 
