@@ -3,10 +3,21 @@ import type { ArtifactRef, Chat, SettingsDescriptor, SliceSettings } from "@agen
 
 import { assetUrl } from "./api";
 
-/** Absolute URL of the chat's current STL, or null if none generated yet. */
+/** Append a cache-busting version so the viewer reloads when an artifact is overwritten. */
+export function versioned(url: string, chat: Chat | null): string {
+  if (!chat) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}v=${Math.floor(chat.updated_at)}`;
+}
+
+/**
+ * Absolute URL of the chat's current STL, or null if none generated yet. Carries a
+ * `?v=updated_at` cache-buster: refine overwrites `model.stl` at the SAME path, and
+ * without this the browser / three.js loader serve the stale geometry (so refines
+ * appear to "do nothing").
+ */
 export function currentStlUrl(chat: Chat | null): string | null {
   if (!chat?.current_stl) return null;
-  return assetUrl(`/chats/${chat.id}/artifacts/${chat.current_stl}`);
+  return versioned(assetUrl(`/chats/${chat.id}/artifacts/${chat.current_stl}`), chat);
 }
 
 /** The most recent artifact of a kind across the whole thread (latest wins). */

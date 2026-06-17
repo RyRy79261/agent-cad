@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from cad.generate.base import Driver, Message, strip_code_fences
+from cad.generate.base import Driver, Message, extract_summary, strip_code_fences
 from cad.generate.drivers import resolve_driver
 from cad.generate.prompt import build_retry_prompt, build_system_prompt, build_user_prompt
 from cad.runner import DEFAULT_FORMATS, BuildResult, build_model
@@ -43,6 +43,7 @@ class GenerateResult:
     attempts: list[Attempt] = field(default_factory=list)
     model_path: str | None = None
     source: str | None = None
+    summary: str | None = None  # the model's plain-language `# SUMMARY:` chat reply
     build: dict[str, Any] | None = None  # final BuildResult.to_dict()
     error: str | None = None
 
@@ -136,6 +137,7 @@ def generate_part(
         source = strip_code_fences(reply)
         model_path.write_text(source, encoding="utf-8")
         result.source = source
+        result.summary = extract_summary(source)  # the model's chat reply (if it wrote one)
         conversation.append(Message("assistant", source))
 
         last_build = build_model(model_path, params={}, out_dir=artifacts_dir,

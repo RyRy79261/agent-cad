@@ -11,6 +11,7 @@ import {
   isDirty,
   latestArtifact,
   sliceStatsFrom,
+  versioned,
 } from "@/lib/chat";
 import { Button } from "@/components/ui/button";
 import {
@@ -291,7 +292,7 @@ export function ChatWorkspace() {
   // --- derived ------------------------------------------------------------- //
   const stlUrl = currentStlUrl(active);
   const gcodeRef = latestArtifact(active, "gcode");
-  const gcodeUrl = gcodeRef ? api.assetUrl(gcodeRef.url) : null;
+  const gcodeUrl = gcodeRef ? versioned(api.assetUrl(gcodeRef.url), active) : null;
   const stats = sliceStatsFrom(gcodeRef);
   const status = active?.status ?? "new";
   const activePrinter = printers.find((p) => p.id === printerId) ?? null;

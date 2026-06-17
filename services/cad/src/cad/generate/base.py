@@ -54,3 +54,22 @@ def strip_code_fences(text: str) -> str:
     if blocks:
         return max(blocks, key=len).strip() + "\n"
     return text.strip() + "\n"
+
+
+_SUMMARY_RE = re.compile(r"#\s*SUMMARY:\s*(.+)", re.IGNORECASE)
+
+
+def extract_summary(source: str) -> str | None:
+    """The model's plain-language ``# SUMMARY: …`` note near the top of model.py.
+
+    It's the conversational chat reply (what the model is / what changed) — surfaced
+    to the user instead of a canned metadata line. Returns ``None`` if absent.
+    """
+    for line in source.splitlines()[:12]:
+        s = line.strip()
+        m = _SUMMARY_RE.match(s)
+        if m:
+            return m.group(1).strip()
+        if s and not s.startswith(("#", '"', "'")):
+            break  # past the header — a real statement; stop looking
+    return None

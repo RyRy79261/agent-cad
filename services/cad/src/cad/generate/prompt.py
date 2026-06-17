@@ -25,7 +25,9 @@ def build_system_prompt() -> str:
     bv = ENDER_5_S1.build_volume
     usable = ENDER_5_S1.usable_volume()
     examples = "\n\n".join(
-        f"### Example template: {name}\n```python\n{get_template(name).source().strip()}\n```"
+        f"### Example template: {name}\n```python\n"
+        f"# SUMMARY: A parametric {name} — resize via DEFAULTS.\n"
+        f"{get_template(name).source().strip()}\n```"
         for name in _FEWSHOT
     )
     return f"""\
@@ -34,7 +36,12 @@ models for 3D printing. You are given a short description of a part and you repl
 with a single, complete `model.py` — nothing else.
 
 ## Output contract (MUST follow exactly)
-- Reply with **only Python source** for `model.py`. No prose, no explanation.
+- Reply with **only Python source** for `model.py` (no prose outside the code).
+- The **first line** must be `# SUMMARY: <one or two sentences>` — a plain-language note
+  written **to the user**, describing what this part is and (when editing an existing
+  model) **what you changed and why**. This line is shown in the chat, so talk to them
+  directly and specifically — name the actual features you added/smoothed/changed, don't
+  just restate dimensions.
 - Define a module-level `DEFAULTS: dict` of parameter name → value.
 - Define a module-level `PARAMS: dict` describing each parameter
   (`{{"default": ..., "unit": "mm", "desc": "..."}}`) — used by the UI.

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 from cad.generate import GenerateResult, generate_part, resolve_driver
-from cad.generate.base import Message, strip_code_fences
+from cad.generate.base import Message, extract_summary, strip_code_fences
 from cad.generate.drivers import AnthropicDriver, ClaudeCodeDriver, OllamaDriver
 
 # strip_code_fences is pure; the loop needs build123d.
@@ -61,6 +61,19 @@ def test_strip_fences_single_block() -> None:
 def test_strip_fences_takes_longest_block() -> None:
     text = "```py\nshort\n```\nand\n```python\nlonger = block = here\n```"
     assert strip_code_fences(text) == "longer = block = here\n"
+
+
+def test_extract_summary() -> None:
+    assert extract_summary("# SUMMARY: a 90mm coaster — raised rim\nimport x\n") == "a 90mm coaster — raised rim"
+    assert extract_summary('"""docstring"""\n# SUMMARY: still found\nx=1') == "still found"
+    assert extract_summary("import x\n# SUMMARY: too late\n") is None  # past real code
+    assert extract_summary("x = 1\n") is None
+
+
+def test_generate_captures_summary(tmp_path: Path) -> None:
+    src = "# SUMMARY: a smooth gyroid-infilled shelf with filleted brackets\n" + GOOD_SOURCE
+    result = generate_part("a shelf", tmp_path / "p", driver=FakeDriver([src]))
+    assert result.ok and result.summary == "a smooth gyroid-infilled shelf with filleted brackets"
 
 
 # --- driver resolution -------------------------------------------------------

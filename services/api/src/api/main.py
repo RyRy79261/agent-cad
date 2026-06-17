@@ -529,15 +529,21 @@ def _narrate_build(payload: dict) -> str:
     meta = build.get("metadata") or {}
     bbox = meta.get("bounding_box_mm")
     verif = build.get("verification") or {}
-    bits = ["Here's your model."]
+    # Lead with the model's own plain-language reply (what it made / changed); fall back
+    # to a generic opener. Then a compact status so the dims don't dominate the message.
+    summary = (payload.get("summary") or "").strip()
+    bits = [summary] if summary else ["Here's your model."]
+    status: list[str] = []
     if bbox:
-        bits.append(f"It's {bbox['x']:.0f}×{bbox['y']:.0f}×{bbox['z']:.0f} mm.")
+        status.append(f"{bbox['x']:.0f}×{bbox['y']:.0f}×{bbox['z']:.0f} mm")
     if meta.get("fits_build_volume") is True:
-        bits.append("Fits the bed.")
+        status.append("fits the bed")
     elif meta.get("fits_build_volume") is False:
-        bits.append("⚠ Doesn't fit the bed as-is.")
+        status.append("⚠ doesn't fit the bed as-is")
     if verif.get("printable") is True:
-        bits.append("Printability checks passed.")
+        status.append("printable")
+    if status:
+        bits.append(f"({' · '.join(status)})")
     return " ".join(bits)
 
 
@@ -792,7 +798,10 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
             f"```python\n{prior.strip()}\n```\n\n"
             "Apply this change, keeping everything else intact and still parametric:\n\n"
             f"{instruction.strip()}\n\n"
-            "Return the COMPLETE updated model.py (edit, do not start over)."
+            "Make a REAL, visible geometric change that addresses the request — don't return "
+            "near-identical code. Update the `# SUMMARY:` first line to tell the user, in plain "
+            "language, exactly what you changed. Return the COMPLETE updated model.py (edit, do "
+            "not start over)."
         )
         result = generate_part(
             augmented, art_dir, model=sel_model, effort=sel_effort, max_rounds=2,
