@@ -36,6 +36,7 @@ from api.chats import (
 )
 from api.descriptor import build_descriptor
 from api.jobs import JobStore
+from api.logging_setup import setup_logging
 from api.projects import get_part, list_parts
 from api.registry import (
     default_printer,
@@ -78,6 +79,7 @@ from api.schemas import (
 from api.store import Store
 
 store = Store()
+setup_logging(store.root / "logs")  # rotating log file + stderr → debuggable failures
 jobs = JobStore(store=store)  # durable: survives restart, recovers terminal results
 
 # Where API-triggered builds write their artifacts. Served read-only over HTTP at
@@ -163,6 +165,23 @@ def storage_info_ep() -> dict:
 def storage_usage_ep() -> dict:
     """Disk usage computed from the store (chats / models / slices / bytes)."""
     return storage_mod.usage(store)
+
+
+@app.post("/storage/reveal", tags=["storage"])
+def storage_reveal_ep() -> dict:
+    """Best-effort 'open folder' on the storage root (xdg-open / open / wslview / explorer.exe)."""
+    import shutil
+    import subprocess
+
+    root = str(store.root)
+    for opener in ("wslview", "xdg-open", "open", "explorer.exe"):
+        if shutil.which(opener):
+            try:
+                subprocess.Popen([opener, root])  # noqa: S603 - fixed openers, controlled path
+                return {"ok": True, "opener": opener, "path": root}
+            except OSError:
+                continue
+    return {"ok": False, "path": root}
 
 
 @app.post("/storage/clear-artifacts", tags=["storage"])
@@ -505,22 +524,34 @@ def slice_generated(name: str, settings: SliceSettings | None = None) -> JobRef:
 def _narrate_build(payload: dict) -> str:
     """A short, templated (no-LLM) summary of a build result for the chat thread."""
     if not payload.get("ok"):
-        return "I couldn't produce a printable model — " + (
-            payload.get("error") or "have a look at the attempts."
-        )
+        err = payload.get("error") or ""
+        low = err.lower()
+        if any(h in low for h in ("connection closed", "try again", "overloaded", "connection error", "timed out")):
+            return (
+                "The model service dropped the connection mid-generation — this happens on long, "
+                "high-effort runs. I retried a few times without luck. Please try again, or switch to "
+                "Sonnet · Medium in the model dropdown for a faster, more reliable response."
+            )
+        return "I couldn't produce a printable model — " + (err or "have a look at the attempts.")
     build = payload.get("build") or {}
     meta = build.get("metadata") or {}
     bbox = meta.get("bounding_box_mm")
     verif = build.get("verification") or {}
-    bits = ["Here's your model."]
+    # Lead with the model's own plain-language reply (what it made / changed); fall back
+    # to a generic opener. Then a compact status so the dims don't dominate the message.
+    summary = (payload.get("summary") or "").strip()
+    bits = [summary] if summary else ["Here's your model."]
+    status: list[str] = []
     if bbox:
-        bits.append(f"It's {bbox['x']:.0f}×{bbox['y']:.0f}×{bbox['z']:.0f} mm.")
+        status.append(f"{bbox['x']:.0f}×{bbox['y']:.0f}×{bbox['z']:.0f} mm")
     if meta.get("fits_build_volume") is True:
-        bits.append("Fits the bed.")
+        status.append("fits the bed")
     elif meta.get("fits_build_volume") is False:
-        bits.append("⚠ Doesn't fit the bed as-is.")
+        status.append("⚠ doesn't fit the bed as-is")
     if verif.get("printable") is True:
-        bits.append("Printability checks passed.")
+        status.append("printable")
+    if status:
+        bits.append(f"({' · '.join(status)})")
     return " ".join(bits)
 
 
@@ -583,7 +614,7 @@ def _resolve_filament_settings(chat: Chat, body: ChatSliceIn | None) -> SliceSet
     return SliceSettings()
 
 
-def _attach_build_to_chat(chat_id: str, result_obj: object) -> dict:
+def _attach_build_to_chat(chat_id: str, result_obj: object, duration_ms: float | None = None) -> dict:
     """Record a generate/refine build's artifacts on the chat + post a narration turn."""
     payload = result_obj.to_dict()  # type: ignore[attr-defined]
     build = getattr(result_obj, "build", None) or {}
@@ -606,7 +637,10 @@ def _attach_build_to_chat(chat_id: str, result_obj: object) -> dict:
             c.current_stl = stl_name
         c.status = "model-ready" if payload.get("ok") else "new"
         save_chat(store, c)
-        append_message(store, chat_id, "assistant", _narrate_build(payload), artifact_refs=refs)
+        append_message(
+            store, chat_id, "assistant", _narrate_build(payload), artifact_refs=refs,
+            usage=payload.get("usage"), duration_ms=duration_ms,
+        )
     return payload
 
 
@@ -658,7 +692,7 @@ def get_chat_artifact(chat_id: str, filename: str) -> FileResponse:
 
 @app.post("/chats/{chat_id}/generate", response_model=JobRef, tags=["chats"])
 def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
-    """Generate a model into the chat's namespace (Anthropic driver, max effort)."""
+    """Generate a model into the chat's namespace (claude-code driver — Claude subscription)."""
     chat = get_chat(store, chat_id)
     if chat is None:
         raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
@@ -669,21 +703,29 @@ def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
     save_chat(store, chat)
     art_dir = store.artifacts_dir(chat_id)
     prompt = body.prompt
+    _settings = load_settings(store)
+    sel_model, sel_effort = _settings.active_model, _settings.effort
 
     def work() -> dict:
+        import time
+
         from cad.generate import generate_part
 
-        # Anthropic driver per the locked v1 decision; effort=max is a driver concern.
+        # claude-code driver (the user's Claude subscription, no metered API key);
+        # model + effort come from settings and are passed EXPLICITLY so generation
+        # doesn't inherit a stray CLAUDE_EFFORT from the launching shell.
+        t0 = time.monotonic()
         result = generate_part(
             prompt,
             art_dir,
-            driver="anthropic",
+            model=sel_model,
+            effort=sel_effort,
             max_rounds=2,
             verify=True,
             name="model",
             out_dir=str(art_dir),
         )
-        return _attach_build_to_chat(chat_id, result)
+        return _attach_build_to_chat(chat_id, result, duration_ms=(time.monotonic() - t0) * 1000)
 
     job = jobs.submit("cad.generate", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
@@ -700,11 +742,18 @@ def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
     assert chat is not None
     rounds = sum(1 for m in chat.messages if m.role == "assistant" and m.quick_replies is not None)
     brief = "\n".join(m.content for m in chat.messages if m.role == "user")
+    _settings = load_settings(store)
+    sel_model, sel_effort = _settings.active_model, _settings.effort
 
     def work() -> dict:
+        import time
+
         from api.interview import interview_turn
 
-        result = interview_turn(brief, driver="anthropic")
+        # claude-code (subscription); model + effort from settings, passed explicitly.
+        t0 = time.monotonic()
+        result = interview_turn(brief, model=sel_model, effort=sel_effort)
+        dur_ms = (time.monotonic() - t0) * 1000
         ready = result.get("status") != "question" or rounds >= 6  # cap at 6 questions
         c = get_chat(store, chat_id)
         if c is not None:
@@ -712,6 +761,7 @@ def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
                 append_message(
                     store, chat_id, "assistant", result["question"],
                     quick_replies=result.get("suggestions") or [],
+                    usage=result.get("usage"), duration_ms=dur_ms,
                 )
                 c2 = get_chat(store, chat_id)
                 if c2 is not None:
@@ -747,12 +797,16 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
     chat.status = "generating"
     save_chat(store, chat)
     instruction = body.instruction
+    _settings = load_settings(store)
+    sel_model, sel_effort = _settings.active_model, _settings.effort
 
     def work() -> dict:
         import shutil
+        import time
 
         from cad.generate import generate_part
 
+        t_refine0 = time.monotonic()
         prior_py = art_dir / "model.py"
         # Keep every version: snapshot the prior source before overwriting (refine v<N>).
         hist = art_dir / "history"
@@ -765,13 +819,16 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
             f"```python\n{prior.strip()}\n```\n\n"
             "Apply this change, keeping everything else intact and still parametric:\n\n"
             f"{instruction.strip()}\n\n"
-            "Return the COMPLETE updated model.py (edit, do not start over)."
+            "Make a REAL, visible geometric change that addresses the request — don't return "
+            "near-identical code. Update the `# SUMMARY:` first line to tell the user, in plain "
+            "language, exactly what you changed. Return the COMPLETE updated model.py (edit, do "
+            "not start over)."
         )
         result = generate_part(
-            augmented, art_dir, driver="anthropic", max_rounds=2,
+            augmented, art_dir, model=sel_model, effort=sel_effort, max_rounds=2,
             verify=True, name="model", out_dir=str(art_dir),
         )
-        return _attach_build_to_chat(chat_id, result)
+        return _attach_build_to_chat(chat_id, result, duration_ms=(time.monotonic() - t_refine0) * 1000)
 
     job = jobs.submit("cad.refine", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)

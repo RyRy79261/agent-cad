@@ -5,70 +5,82 @@
 > print settings on the right, and a Settings area for printers & filaments. This doc specs **one
 > screen — the "Calibration / Test prints" section inside Settings.** Status: **DRAFT.**
 
+> **Re-grounded against the finished `chat-ui.pen` design (scanned 2026-06-16 via the Pencil CLL).**
+> The design realises this as **three screens** — the per-filament **Filament · Calibration** editor
+> and its two **Result** screens (Cube / Benchy) — reached from **Printer Detail**. This doc now
+> matches that. It stays simple (no tuning wizard), but the settings are **editable in place** and
+> slicing opens a **real result screen** (toolpath + stats + download), not a bare file download.
+
 ## 1. What it is (and what it is NOT)
 
-A small **section inside Settings** where the two reference test objects — the **XYZ calibration
-cube** and the **3DBenchy** — live. It shows the **current settings** for the selected
-printer + filament, and gives you a button to **slice either object with those settings and
-download the g-code**, so you can print it and eyeball whether your settings are good.
+A per-**printer × filament** screen that (a) lets you **edit the filament's slice profile** — the
+saved per-material defaults the AI applies automatically — and (b) **slices the two reference
+objects** (XYZ **calibration cube**, **3DBenchy**) with those settings so you can print and eyeball
+them. Slicing opens a **Result screen** with the g-code toolpath + stats + download.
 
-That's the whole feature. It is a **place to test your settings**, not a tuning tool. The page
-**doesn't explain or teach** — when a print comes out wrong you just **ask the AI in chat** (it's
-the expert printer here); the UI only slices and downloads. This is a **single-user tool for the
-owner**, not a learn-to-print app for other people — so don't add hand-holding.
+It's a **place to set a filament's settings and test them**, not a tuning tool. The page **doesn't
+explain or teach** — when a print comes out wrong you **ask the AI in chat** (it's the expert).
+Single-user tool for the owner; no hand-holding.
 
-**NOT in scope** (explicitly — so this doesn't grow back into a wizard):
-- ❌ No step-by-step calibration flow.
-- ❌ No measure → recommend → adjust loop.
-- ❌ No per-variable tuning (temperature / retraction / flow towers, sweeps, validation).
-- ❌ No tapping into OrcaSlicer's automated calibration wizards (they're GUI-only anyway).
-- ❌ No symptom picker / measurement inputs / recommendation engine.
+**NOT in scope** (so this doesn't grow into a wizard):
+- ❌ No step-by-step calibration flow · ❌ no measure → recommend → adjust loop · ❌ no per-variable
+  tuning towers/sweeps · ❌ no OrcaSlicer wizards · ❌ no symptom picker / recommendation engine.
 
-## 2. Where it lives
+## 2. Where it lives (3 screens)
 
-Settings → **Equipment** → *[Printer]* → *[Filament]* — a **"Test prints"** (or
-"Calibration") section, scoped to that **printer × filament**. It slices using **that filament's
-current saved settings** (the same defaults a normal slice would use).
+```
+Settings → Equipment → [Printer Detail] → [Filament profile]            (the editor)
+                                              ├─ "Test prints" → Cube   → Cube Result
+                                              └─ "Test prints" → Benchy → Benchy Result
+```
+A shared **Calib Context Header** sits at the top of all three: printer thumb + name, a **filament
+chip** (colour swatch + "PETG · Slate Grey"), an **"Original"** chip, and the spec line
+("FDM · 0.4 mm nozzle · 220 × 220 × 280 mm"). Breadcrumb: Equipment › Printer › Filament › [object].
 
-## 3. What's on it
+## 3. Filament · Calibration editor
 
-1. **Context header** — which printer + filament these settings belong to
-   (e.g. "Creality Ender 5 S1 · PETG – Slate Grey").
-2. **Current settings** — a compact, **read-only** summary of the values that will be used to
-   slice (layer height, walls, infill, flow, nozzle/bed temp, speed, retraction). An
-   **"Edit settings"** link jumps to the Filament Editor to change them.
-3. **Two test-object cards:**
-   - **Calibration Cube** — one line: *"20 mm XYZ cube — quick dimensional & surface check."*
-   - **3DBenchy** — one line: *"The classic torture test — overhangs, bridging, fine detail."*
-   - Each card: an optional small 3D preview + a **`Slice & Download`** button.
-4. **After slicing** (reuses the existing slice result UI): print-time / filament / layer
-   estimates, an optional g-code toolpath preview, and the **g-code download** (for the SD card).
+1. **Calib Context Header** (shared).
+2. **Slice settings** section — *"Edit the values used to slice this filament's test prints, then
+   save your changes."* An **editable, schema-driven form** rendered from the printer+filament
+   `SettingsDescriptor` (§3a of the functional spec): **all available settings**, grouped, bound by
+   real `SliceSettings` key — not a hand-picked subset. The design's headline controls (Infill,
+   Layer height, Walls, Flow rate, Nozzle, Bed, Print speed, Retraction) are the *visual guide*; the
+   engineer-owned descriptor is the contract, so the full set renders.
+   - **Action bar:** hint *"Changes apply to this filament's test prints"* + **Cancel** (revert to
+     last-saved) + **Save** (persist to `printers/<id>.json → filaments[].settings`; enabled only
+     when dirty). Save validates against `SliceSettings` bounds.
+3. **"Original" (the one default concept, §3.8):** the filament's `default_settings` is the
+   committed-profile baseline. The header **"Original"** chip shows whether the current values match
+   it; when they differ it offers **Reset to original** (still needs Save). There is no second
+   "default" — editing + Save *is* setting the filament's saved defaults the AI uses.
+4. **Test prints** section — two cards (**Calibration cube**, **3DBenchy**), each with a 3D preview
+   chip + a **Slice** button that **navigates to the Result screen** for that object. Benchy is
+   gated when `GET /samples → benchy.available = false`.
 
-No guidance, links, or "what to do next" copy on the page — if the result looks off, the owner
-asks the AI in the chat.
+## 4. Cube / Benchy Result screen (one shared `ResultView`)
 
-## 4. Behaviour
+Reached from a test-print card. On open it **runs the calibrate job** (`POST /calibrate
+{target, printer_id, filament_id}`) at the filament's **saved** settings, polls, then shows:
+- **Result header:** object icon + *"Calibration cube — sliced"* / *"3DBenchy — sliced"* + a **Sliced** badge.
+- **Toolpath viewer** (`GcodeViewer`) + **layer scrub** ("Layer 100 / 100").
+- **Stats row:** print time · filament length · filament weight · **layer count**.
+- **Actions:** **Download G-code** (plain `.gcode`) + **Back to test prints** (→ the editor).
+- **States:** slicing (spinner), success (the above), or a graceful **OrcaSlicer-missing / slice
+  error** message (the chat is where you'd ask why) — never a crash or dead end.
 
-- **`Slice & Download` (Cube):** build the parametric cube template at its default (20 mm) →
-  slice with the filament's current settings → return g-code to download.
-- **`Slice & Download` (Benchy):** stage the committed 3DBenchy STL → slice with the filament's
-  current settings → return g-code to download.
-- Same async/job + download flow the app already uses elsewhere; same friendly
-  "OrcaSlicer missing → see Printer setup" error; gate the Benchy button if its asset is
-  unavailable (LFS not fetched).
-
-## 5. Reuse (this is mostly assembly — almost no net-new backend)
+## 5. Reuse (mostly assembly — no net-new backend)
 
 | Need | Reuse |
 |------|-------|
-| Cube object | `services/cad/src/cad/templates/cube.py` (default 20 mm) → build → slice |
-| Benchy object | `projects/benchy/` via `GET /samples` (gate on `available`) → `/samples/benchy/stage` → `/slice` |
-| Slice + stats + download | existing slice routes + `slice_info` (print time / filament / layers) + g-code download |
-| Settings used to slice | the filament's saved settings → `SliceSettings` → `slice_overrides()` |
-| Viewer (optional preview) | existing `StlViewer` / `GcodeViewer` |
+| Slice cube / Benchy at saved settings | `POST /calibrate {target, printer_id, filament_id}` → job → `gcode_url` + `info` |
+| Settings form | the `SettingsDescriptor` + the `SettingsForm` renderer (shared with the chat panel) |
+| Toolpath + scrub + stats | `GcodeViewer` + the `StatsRow` (print time / length / weight / layer count) |
+| Filament persistence | `PUT /printers/{id}/filaments/{fid}` (settings) ; `default_settings` = the "Original" baseline |
+| Benchy gating | `GET /samples → benchy.available` |
 
-## 6. Open questions
+## 6. Create-profile flow (Printer Detail)
 
-1. **Cube size:** fixed at 20 mm, or expose the size field? (Template supports 10–200 mm; 20 is standard.)
-2. **Show a 3D preview** on each card, or just the slice + download?
-3. **Label:** "Test prints" or "Calibration"?
+Printer Detail lists filament profiles (swatch + material + brand/colour + Nozzle/Bed/Speed specs).
+**Add Filament** creates a new profile (name/material/brand/colour + material-appropriate temp
+defaults) and **opens the Filament · Calibration editor** so you immediately set its full settings.
+Editing a row opens the same editor. (Identity-only quick edits may stay a small dialog.)

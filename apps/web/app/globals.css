@@ -2,51 +2,65 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Warm-neutral theme with a tan/brown brand accent. Readable in light AND dark. */
+/*
+ * Agent CAD — dark slate/blue theme.
+ *
+ * Palette extracted from the Pencil design (packages/ui/design/chat-ui.pen) and
+ * converted hex → HSL triplets. v1 is dark-only: `:root` and `.dark` carry the
+ * same values so the app renders correctly regardless of the theme class.
+ *
+ * Token map: standard shadcn tokens (--background, --primary, …) drive the
+ * shadcn/ui primitives; the design-specific extras (--sidebar, --elevated,
+ * --border-strong, --success, --warning, --danger, …) drive the app chrome.
+ */
 @layer base {
-  :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 12%;
-    --card: 0 0% 100%;
-    --card-foreground: 0 0% 12%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 12%;
-    --primary: 28 42% 40%;
-    --primary-foreground: 40 33% 97%;
-    --secondary: 30 20% 96%;
-    --secondary-foreground: 0 0% 12%;
-    --muted: 30 15% 95%;
-    --muted-foreground: 0 0% 40%;
-    --accent: 30 38% 93%;
-    --accent-foreground: 28 42% 28%;
-    --destructive: 0 75% 48%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 30 15% 88%;
-    --input: 30 15% 88%;
-    --ring: 28 42% 40%;
-    --radius: 0.5rem;
-  }
-
+  :root,
   .dark {
-    --background: 0 0% 7%;
-    --foreground: 0 0% 96%;
-    --card: 0 0% 11%;
-    --card-foreground: 0 0% 96%;
-    --popover: 0 0% 9%;
-    --popover-foreground: 0 0% 96%;
-    --primary: 30 44% 62%;
-    --primary-foreground: 28 40% 12%;
-    --secondary: 0 0% 16%;
-    --secondary-foreground: 0 0% 96%;
-    --muted: 0 0% 16%;
-    --muted-foreground: 0 0% 65%;
-    --accent: 28 24% 19%;
-    --accent-foreground: 30 40% 85%;
-    --destructive: 0 62% 46%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 18%;
-    --input: 0 0% 20%;
-    --ring: 30 44% 62%;
+    /* surfaces (back → front) */
+    --background: 223 49% 8%;
+    --sidebar: 221 49% 10%;
+    --card: 220 44% 13%;
+    --popover: 222 45% 16%;
+    --elevated: 220 43% 18%;
+
+    /* text */
+    --foreground: 218 53% 94%;
+    --card-foreground: 218 53% 94%;
+    --popover-foreground: 218 53% 94%;
+    --muted-foreground: 217 21% 65%;
+    --subtle-foreground: 218 19% 45%;
+
+    /* brand / interactive */
+    --primary: 217 91% 60%;
+    --primary-hover: 218 80% 55%;
+    --primary-foreground: 0 0% 100%;
+    --accent-bright: 213 94% 68%;
+
+    /* secondary + muted + accent map onto the elevated/accent surfaces */
+    --secondary: 220 43% 18%;
+    --secondary-foreground: 218 53% 94%;
+    --muted: 220 43% 18%;
+    --accent: 218 51% 23%;
+    --accent-foreground: 218 53% 94%;
+    --accent-muted: 218 51% 23%;
+
+    /* inputs + borders */
+    --input: 219 37% 19%;
+    --input-background: 217 48% 11%;
+    --border: 219 37% 19%;
+    --border-strong: 219 34% 26%;
+    --ring: 217 91% 60%;
+
+    /* status */
+    --success: 158 64% 52%;
+    --success-muted: 162 47% 11%;
+    --warning: 43 96% 56%;
+    --danger: 0 91% 71%;
+    --danger-muted: 324 31% 13%;
+    --destructive: 0 91% 71%;
+    --destructive-foreground: 0 0% 100%;
+
+    --radius: 0.625rem;
   }
 }
 

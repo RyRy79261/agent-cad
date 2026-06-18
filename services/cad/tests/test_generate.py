@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 from cad.generate import GenerateResult, generate_part, resolve_driver
-from cad.generate.base import Message, strip_code_fences
+from cad.generate.base import Message, extract_summary, strip_code_fences
 from cad.generate.drivers import AnthropicDriver, ClaudeCodeDriver, OllamaDriver
 
 # strip_code_fences is pure; the loop needs build123d.
@@ -63,6 +63,31 @@ def test_strip_fences_takes_longest_block() -> None:
     assert strip_code_fences(text) == "longer = block = here\n"
 
 
+def test_extract_summary() -> None:
+    assert extract_summary("# SUMMARY: a 90mm coaster — raised rim\nimport x\n") == "a 90mm coaster — raised rim"
+    assert extract_summary('"""docstring"""\n# SUMMARY: still found\nx=1') == "still found"
+    assert extract_summary("import x\n# SUMMARY: too late\n") is None  # past real code
+    assert extract_summary("x = 1\n") is None
+
+
+def test_generate_captures_summary(tmp_path: Path) -> None:
+    src = "# SUMMARY: a smooth gyroid-infilled shelf with filleted brackets\n" + GOOD_SOURCE
+    result = generate_part("a shelf", tmp_path / "p", driver=FakeDriver([src]))
+    assert result.ok and result.summary == "a smooth gyroid-infilled shelf with filleted brackets"
+
+
+def test_generate_captures_token_usage(tmp_path: Path) -> None:
+    drv = FakeDriver([GOOD_SOURCE])
+    drv.last_usage = {  # type: ignore[attr-defined]
+        "input_tokens": 9, "cache_creation_tokens": 6491, "cache_read_tokens": 800, "output_tokens": 450,
+    }
+    result = generate_part("a cube", tmp_path / "p", driver=drv)
+    assert result.ok
+    assert result.usage == {
+        "input_tokens": 9, "cache_creation_tokens": 6491, "cache_read_tokens": 800, "output_tokens": 450,
+    }
+
+
 # --- driver resolution -------------------------------------------------------
 
 def test_resolve_default_is_claude_code() -> None:
@@ -92,6 +117,72 @@ def test_anthropic_unavailable_without_key(monkeypatch: pytest.MonkeyPatch) -> N
     usable, reason = AnthropicDriver().available()
     # Either the package is missing or the key is — both are "not usable".
     assert usable is False and reason
+
+
+def test_claude_code_decodes_utf8_and_passes_model_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: the CLI's JSON echoes model.py with non-ASCII (— → °); decoding it
+    must be UTF-8, not the process locale (which crashed with UnicodeDecodeError), and
+    --model / --effort must reach the command."""
+    from types import SimpleNamespace
+
+    import cad.generate.drivers as drivers_mod
+
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        body = json.dumps({"is_error": False, "result": "x = 1  # smooth lattice — 45° chamfer →"})
+        return SimpleNamespace(returncode=0, stdout=body, stderr="")
+
+    monkeypatch.setattr(drivers_mod.subprocess, "run", fake_run)
+    drv = ClaudeCodeDriver(model="claude-sonnet-4-6", effort="medium")
+    out = drv.complete("system —", [Message("user", "smooth the L-brackets — round 90° joints")])
+
+    assert "—" in out and "→" in out and "°" in out  # non-ASCII round-trips
+    assert captured["kwargs"].get("encoding") == "utf-8"  # locale-independent decode
+    assert "--model" in captured["cmd"] and "claude-sonnet-4-6" in captured["cmd"]
+    assert "--effort" in captured["cmd"] and "medium" in captured["cmd"]
+
+
+def test_claude_code_retries_transient_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A dropped connection ('Connection closed … Try again') is transient — retry, don't fail."""
+    from types import SimpleNamespace
+
+    import cad.generate.drivers as drivers_mod
+
+    n = {"calls": 0}
+
+    def fake_run(cmd, **kwargs):
+        n["calls"] += 1
+        if n["calls"] == 1:  # first attempt: the exact transient failure the user hit
+            msg = "API Error: Connection closed while thinking, before producing a response. Try again."
+            return SimpleNamespace(returncode=1, stdout=json.dumps({"is_error": True, "result": msg}), stderr="")
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"is_error": False, "result": "x = 1"}), stderr="")
+
+    monkeypatch.setattr(drivers_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(drivers_mod.time, "sleep", lambda *_: None)
+    out = ClaudeCodeDriver().complete("sys", [Message("user", "hi")])
+    assert out == "x = 1" and n["calls"] == 2  # retried once, then succeeded
+
+
+def test_claude_code_does_not_retry_fatal(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    import cad.generate.drivers as drivers_mod
+
+    n = {"calls": 0}
+
+    def fake_run(cmd, **kwargs):
+        n["calls"] += 1
+        body = json.dumps({"is_error": True, "result": "Invalid model id: bogus"})
+        return SimpleNamespace(returncode=1, stdout=body, stderr="")
+
+    monkeypatch.setattr(drivers_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(drivers_mod.time, "sleep", lambda *_: None)
+    with pytest.raises(RuntimeError, match="Invalid model id"):
+        ClaudeCodeDriver().complete("sys", [Message("user", "hi")])
+    assert n["calls"] == 1  # non-transient → no retry
 
 
 # --- orchestration loop ------------------------------------------------------

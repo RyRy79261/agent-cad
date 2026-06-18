@@ -54,8 +54,12 @@ function shutdown(code = 0) {
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
-// API: FastAPI on :8420
-run("api", "uv", ["run", "--package", "apiserver", "uvicorn", "api.main:app", "--port", "8420"]);
+// API: FastAPI on :8420. Force Python UTF-8 mode so a bare/ASCII shell locale can't
+// make subprocess pipes or file IO default to ASCII (which crashed model generation
+// on non-ASCII CLI output). The driver also pins UTF-8 itself; this is belt-and-suspenders.
+run("api", "uv", ["run", "--package", "apiserver", "uvicorn", "api.main:app", "--port", "8420"], {
+  env: { ...process.env, PYTHONUTF8: "1" },
+});
 // Web: Next.js on :3420 (the port is baked into the web `dev` script)
 run("web", "pnpm", ["-C", "apps/web", "dev"]);
 
@@ -65,7 +69,12 @@ setTimeout(() => {
     process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
   const args = process.platform === "win32" ? ["/c", "start", "", WEB_URL] : [WEB_URL];
   try {
-    spawn(opener, args, { stdio: "ignore", detached: true }).unref();
+    const child = spawn(opener, args, { stdio: "ignore", detached: true });
+    // A missing opener (e.g. no `xdg-open` on a headless/WSL box) surfaces as an
+    // async 'error' event — NOT a thrown exception — so it must be handled here or
+    // it crashes the whole launcher and orphans the API/web processes.
+    child.on("error", () => process.stdout.write(`[start] open ${WEB_URL} in your browser\n`));
+    child.unref();
     process.stdout.write(`[start] opening ${WEB_URL}\n`);
   } catch {
     process.stdout.write(`[start] open ${WEB_URL} in your browser\n`);

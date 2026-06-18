@@ -94,11 +94,14 @@ class Printer(BaseModel):
 class Settings(BaseModel):
     """App settings persisted to ``~/.agent-cad/settings.json``.
 
-    No ``effort`` knob — generation runs at MAX effort (locked decision);
-    ``active_model`` is the Anthropic model id.
+    ``active_model`` is the model id/alias passed to the LLM driver (``--model``), and
+    ``effort`` the reasoning level (``--effort``). v1 uses the ``claude-code`` driver
+    (the user's Claude subscription — no metered API key). Passing both explicitly also
+    stops generation from inheriting a stray ``CLAUDE_EFFORT`` from the launching shell.
     """
 
     active_model: str = "claude-opus-4-8"
+    effort: Literal["low", "medium", "high", "xhigh", "max"] = "high"
     default_printer_id: str | None = None
     storage_location: str | None = None
     theme: str = "system"
@@ -167,6 +170,9 @@ class Message(BaseModel):
     ts: float = 0.0
     quick_replies: list[str] | None = None
     artifact_refs: list[ArtifactRef] = Field(default_factory=list)
+    # Assistant-turn telemetry: token usage (input/output/cache) + wall-clock duration.
+    usage: dict[str, int] | None = None
+    duration_ms: float | None = None
 
 
 class Chat(BaseModel):

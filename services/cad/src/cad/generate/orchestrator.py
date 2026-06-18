@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from cad.generate.base import Driver, Message, strip_code_fences
+from cad.generate.base import Driver, Message, extract_summary, strip_code_fences
 from cad.generate.drivers import resolve_driver
 from cad.generate.prompt import build_retry_prompt, build_system_prompt, build_user_prompt
 from cad.runner import DEFAULT_FORMATS, BuildResult, build_model
@@ -43,6 +43,8 @@ class GenerateResult:
     attempts: list[Attempt] = field(default_factory=list)
     model_path: str | None = None
     source: str | None = None
+    summary: str | None = None  # the model's plain-language `# SUMMARY:` chat reply
+    usage: dict[str, int] | None = None  # token usage summed across all rounds
     build: dict[str, Any] | None = None  # final BuildResult.to_dict()
     error: str | None = None
 
@@ -72,6 +74,7 @@ def generate_part(
     *,
     driver: str | Driver | None = None,
     model: str | None = None,
+    effort: str | None = None,
     max_rounds: int = 2,
     verify: bool = True,
     formats: tuple[str, ...] = DEFAULT_FORMATS,
@@ -92,7 +95,9 @@ def generate_part(
     slice path serves templates and generated parts alike.
     """
     try:
-        drv: Driver = driver if isinstance(driver, Driver) else resolve_driver(driver, model=model)
+        drv: Driver = (
+            driver if isinstance(driver, Driver) else resolve_driver(driver, model=model, effort=effort)
+        )
     except ValueError as exc:
         return GenerateResult(
             ok=False, driver=str(driver), description=description, dest=str(dest),
@@ -121,6 +126,7 @@ def generate_part(
         return result
 
     last_build: BuildResult | None = None
+    total_usage = {"input_tokens": 0, "cache_creation_tokens": 0, "cache_read_tokens": 0, "output_tokens": 0}
     for round_no in range(max_rounds + 1):
         result.rounds = round_no + 1
         try:
@@ -130,9 +136,16 @@ def generate_part(
             result.attempts.append(Attempt(round_no + 1, False, None, str(exc)[:200]))
             return result
 
+        u = getattr(drv, "last_usage", None)
+        if u:
+            for k in total_usage:
+                total_usage[k] += int(u.get(k, 0) or 0)
+        result.usage = dict(total_usage)
+
         source = strip_code_fences(reply)
         model_path.write_text(source, encoding="utf-8")
         result.source = source
+        result.summary = extract_summary(source)  # the model's chat reply (if it wrote one)
         conversation.append(Message("assistant", source))
 
         last_build = build_model(model_path, params={}, out_dir=artifacts_dir,

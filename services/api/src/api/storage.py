@@ -31,10 +31,14 @@ def _dir_size(path: Path) -> int:
 def storage_info(store: Store, app_version: str | None = None) -> dict[str, Any]:
     import os
 
+    from api.logging_setup import log_path
+
+    lp = log_path()
     return {
         "storage_root": str(store.root),
         "writable": os.access(store.root, os.W_OK) if store.root.exists() else False,
         "app_version": app_version,
+        "log_file": str(lp) if lp else None,
     }
 
 

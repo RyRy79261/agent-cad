@@ -8,7 +8,10 @@ from api.jobs import JobStatus, JobStore
 from api.store import Store
 
 
-def _wait_done(js: JobStore, job_id: str, timeout: float = 5.0):
+def _wait_done(js: JobStore, job_id: str, timeout: float = 60.0):
+    # Generous timeout: these jobs finish in milliseconds, but the full suite (and a
+    # concurrently-running dev server / real slices) can load the box and starve the
+    # worker thread — a tight timeout would flake under load with no real failure.
     deadline = time.time() + timeout
     while time.time() < deadline:
         job = js.get(job_id)

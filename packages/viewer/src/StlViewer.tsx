@@ -4,15 +4,18 @@ import { Bounds, OrbitControls, Stage } from "@react-three/drei";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import type { BufferGeometry } from "three";
 
+/** Brand-blue extrusion on a dark canvas — the Agent CAD viewer look (token: --primary). */
+export const DEFAULT_STL_COLOR = "#3b82f6";
+
 export interface StlViewerProps {
   /** URL to an STL file (e.g. an artifact served by the API). */
   url: string;
-  /** Mesh colour. */
+  /** Mesh colour. Defaults to the Agent CAD brand blue. */
   color?: string;
   className?: string;
 }
 
-function Model({ url, color = "#c9a27a" }: { url: string; color?: string }) {
+function Model({ url, color = DEFAULT_STL_COLOR }: { url: string; color?: string }) {
   const geometry = useLoader(STLLoader, url) as BufferGeometry;
   const prepared = useMemo(() => {
     // STLs come from the 3D-printing pipeline, which is Z-up (Z = build-plate
@@ -30,7 +33,7 @@ function Model({ url, color = "#c9a27a" }: { url: string; color?: string }) {
 
   return (
     <mesh geometry={prepared}>
-      <meshStandardMaterial color={color} roughness={0.6} metalness={0.1} />
+      <meshStandardMaterial color={color} roughness={0.45} metalness={0.15} />
     </mesh>
   );
 }

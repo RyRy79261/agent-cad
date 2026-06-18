@@ -47,11 +47,13 @@ def _parse_interview(reply: str) -> dict:
     return {"status": "ready"}
 
 
-def interview_turn(brief: str, *, driver: str | None = "anthropic", model: str | None = None) -> dict:
+def interview_turn(
+    brief: str, *, driver: str | None = None, model: str | None = None, effort: str | None = None
+) -> dict:
     """One clarifying turn. Returns ``{status: question, question, suggestions}`` or
     ``{status: ready}`` — never raises, never blocks intake."""
     try:
-        drv = resolve_driver(driver, model=model)
+        drv = resolve_driver(driver, model=model, effort=effort)
     except ValueError as exc:
         return {"status": "ready", "reason": f"interview skipped: {exc}"}
     usable, reason = drv.available()
@@ -62,4 +64,6 @@ def interview_turn(brief: str, *, driver: str | None = "anthropic", model: str |
         reply = drv.complete(INTERVIEW_SYSTEM, [Message("user", user)])
     except Exception as exc:  # noqa: BLE001 - any backend failure must not block intake
         return {"status": "ready", "reason": f"interview error: {exc}"}
-    return _parse_interview(reply)
+    result = _parse_interview(reply)
+    result["usage"] = getattr(drv, "last_usage", None)
+    return result

@@ -16,10 +16,35 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import urllib.error
 import urllib.request
 
 from cad.generate.base import Driver, Message
+
+# Substrings that mark a transient (retryable) LLM failure rather than a fatal one.
+_RETRYABLE_HINTS = (
+    "connection closed", "connection error", "connection reset", "econnreset",
+    "try again", "overloaded", "rate limit", "429", "529", "503",
+    "timeout", "timed out", "service unavailable", "internal server error",
+)
+
+
+def _is_retryable(message: str) -> bool:
+    m = message.lower()
+    return any(hint in m for hint in _RETRYABLE_HINTS)
+
+
+def _usage_from(payload: dict) -> dict[str, int]:
+    """Normalise the CLI's token-usage block. The (large, cached) system prompt lands in
+    cache_creation on the first call and cache_read after — both count as input."""
+    u = payload.get("usage") or {}
+    return {
+        "input_tokens": int(u.get("input_tokens", 0) or 0),
+        "cache_creation_tokens": int(u.get("cache_creation_input_tokens", 0) or 0),
+        "cache_read_tokens": int(u.get("cache_read_input_tokens", 0) or 0),
+        "output_tokens": int(u.get("output_tokens", 0) or 0),
+    }
 
 # Default models per backend. Claude Code resolves "the latest" itself when None;
 # the API path pins Opus 4.8 (best for code-gen); Ollama needs a locally-pulled tag.
@@ -32,12 +57,16 @@ class ClaudeCodeDriver:
 
     name = "claude-code"
 
-    def __init__(self, model: str | None = None) -> None:
-        # None → let the CLI use the session's default model. A value maps to
-        # `--model` (an alias like "opus" or a full id both work).
+    def __init__(self, model: str | None = None, effort: str | None = None) -> None:
+        # None → let the CLI use the session's default. A value maps to `--model`
+        # (alias like "opus" or a full id) / `--effort` (low|medium|high|xhigh|max).
+        # Passing these EXPLICITLY also stops the spawned `claude -p` from inheriting
+        # a stray CLAUDE_EFFORT from the parent process.
         self.model = model
+        self.effort = effort
         self.bin = os.environ.get("AGENT_CAD_CLAUDE_BIN", "claude")
-        self.timeout = int(os.environ.get("AGENT_CAD_CLAUDE_TIMEOUT", "300"))
+        self.timeout = int(os.environ.get("AGENT_CAD_CLAUDE_TIMEOUT", "600"))
+        self.last_usage: dict[str, int] | None = None  # token usage of the most recent call
 
     def available(self) -> tuple[bool, str]:
         if shutil.which(self.bin) is None:
@@ -61,17 +90,39 @@ class ClaudeCodeDriver:
         ]
         if self.model:
             cmd += ["--model", self.model]
-        proc = subprocess.run(  # noqa: S603 - args are controlled, not shell-interpolated
-            cmd, capture_output=True, text=True, timeout=self.timeout
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(
-                f"claude CLI exited {proc.returncode}: {(proc.stderr or proc.stdout).strip()[:500]}"
+        if self.effort:
+            cmd += ["--effort", self.effort]
+        # Retry transient API failures (the CLI surfaces "Connection closed … Try again",
+        # overloaded/429/529, timeouts on long high-effort runs) — they're flaky, not fatal.
+        retries = int(os.environ.get("AGENT_CAD_CLAUDE_RETRIES", "3"))
+        last = "no output"
+        for attempt in range(retries):
+            # Force UTF-8 (don't trust the process locale): the CLI emits JSON whose
+            # `result` echoes model.py, routinely containing non-ASCII (em-dashes, →, °).
+            # `text=True` alone would decode with the locale encoding — ASCII on a bare
+            # locale — and crash with UnicodeDecodeError. `errors="replace"` is a backstop.
+            proc = subprocess.run(  # noqa: S603 - args are controlled, not shell-interpolated
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=self.timeout,
             )
-        payload = json.loads(proc.stdout)
-        if payload.get("is_error"):
-            raise RuntimeError(f"claude CLI error: {payload.get('result', payload)}")
-        return payload["result"]
+            # The CLI emits a JSON envelope even on error (--output-format json).
+            try:
+                payload = json.loads(proc.stdout) if proc.stdout.strip() else {}
+            except json.JSONDecodeError:
+                payload = {}
+            if proc.returncode == 0 and payload and not payload.get("is_error"):
+                self.last_usage = _usage_from(payload)
+                return payload["result"]
+            last = str(payload.get("result") or proc.stderr or proc.stdout or "").strip()[:500]
+            if attempt < retries - 1 and _is_retryable(last):
+                time.sleep(3 * (attempt + 1))  # brief backoff; transient drops clear fast
+                continue
+            break
+        raise RuntimeError(f"claude CLI error: {last}")
 
 
 class AnthropicDriver:
@@ -79,8 +130,9 @@ class AnthropicDriver:
 
     name = "anthropic"
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(self, model: str | None = None, effort: str | None = None) -> None:
         self.model = model or os.environ.get("AGENT_CAD_ANTHROPIC_MODEL", _DEFAULT_ANTHROPIC_MODEL)
+        self.effort = effort
         self.max_tokens = int(os.environ.get("AGENT_CAD_ANTHROPIC_MAX_TOKENS", "8000"))
 
     def available(self) -> tuple[bool, str]:
@@ -119,8 +171,9 @@ class OllamaDriver:
 
     name = "ollama"
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(self, model: str | None = None, effort: str | None = None) -> None:
         self.model = model or os.environ.get("AGENT_CAD_OLLAMA_MODEL", _DEFAULT_OLLAMA_MODEL)
+        self.effort = effort  # accepted for a uniform driver signature; not used by Ollama
         self.host = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
         self.timeout = int(os.environ.get("AGENT_CAD_OLLAMA_TIMEOUT", "600"))
 
@@ -172,7 +225,7 @@ _REGISTRY: dict[str, type] = {
 DRIVER_NAMES = ("claude-code", "anthropic", "ollama")
 
 
-def resolve_driver(name: str | None = None, *, model: str | None = None) -> Driver:
+def resolve_driver(name: str | None = None, *, model: str | None = None, effort: str | None = None) -> Driver:
     """Pick a driver: explicit ``name`` > ``$AGENT_CAD_LLM_DRIVER`` > ``claude-code``."""
     chosen = (name or os.environ.get("AGENT_CAD_LLM_DRIVER") or "claude-code").strip().lower()
     factory = _REGISTRY.get(chosen)
@@ -180,4 +233,4 @@ def resolve_driver(name: str | None = None, *, model: str | None = None) -> Driv
         raise ValueError(
             f"unknown LLM driver {chosen!r}. Available: {', '.join(DRIVER_NAMES)}"
         )
-    return factory(model=model)
+    return factory(model=model, effort=effort)

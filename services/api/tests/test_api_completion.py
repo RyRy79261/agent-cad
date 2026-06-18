@@ -41,6 +41,15 @@ def test_interview_turn_degrades_to_ready_without_key(monkeypatch):
     assert out["status"] == "ready"
 
 
+def test_interview_turn_degrades_when_claude_cli_absent(monkeypatch):
+    # v1 default driver is claude-code (the Claude subscription); with no `claude`
+    # CLI on PATH it must degrade to ready, never block intake.
+    monkeypatch.delenv("AGENT_CAD_LLM_DRIVER", raising=False)
+    monkeypatch.setenv("AGENT_CAD_CLAUDE_BIN", "claude-not-installed-xyz")
+    out = interview_turn("a phone stand")  # default driver
+    assert out["status"] == "ready"
+
+
 # --- HTTP: import (fully exercised) + interview/refine/calibrate (structural) #
 
 

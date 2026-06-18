@@ -18,6 +18,7 @@ OrcaSlicer ships a built-in "Creality Ender-5 S1 0.4 nozzle" profile with
 
 from __future__ import annotations
 
+import glob
 import os
 import shutil
 import subprocess
@@ -30,13 +31,36 @@ from slicer.result import SliceResult
 _ENV_BIN = "ORCA_SLICER_BIN"
 _DEFAULT_BIN = "orca-slicer"
 
+# Probed when the binary isn't explicit / on PATH, so a box with the AppImage in a
+# normal spot "just works" without anyone exporting $ORCA_SLICER_BIN (Linux AppImage,
+# ~/bin, /opt, and the macOS app bundle). Newest match wins.
+_FALLBACK_GLOBS = (
+    "~/Applications/OrcaSlicer*.AppImage",
+    "~/Applications/Orca*.AppImage",
+    "~/.local/bin/OrcaSlicer*.AppImage",
+    "~/bin/OrcaSlicer*.AppImage",
+    "/opt/OrcaSlicer*/**/orca-slicer",
+    "/Applications/OrcaSlicer.app/Contents/MacOS/OrcaSlicer",
+)
+
 
 def resolve_bin(explicit: str | None = None) -> str | None:
-    """Locate the OrcaSlicer executable (explicit arg > env > PATH)."""
+    """Locate the OrcaSlicer executable.
+
+    Order: explicit arg > ``$ORCA_SLICER_BIN`` > ``orca-slicer`` on PATH > a probe of
+    common install locations (an AppImage in ``~/Applications`` etc.).
+    """
     candidate = explicit or os.environ.get(_ENV_BIN) or _DEFAULT_BIN
     if Path(candidate).is_file():
-        return candidate
-    return shutil.which(candidate)
+        return str(Path(candidate))
+    found = shutil.which(candidate)
+    if found:
+        return found
+    for pattern in _FALLBACK_GLOBS:
+        matches = sorted(glob.glob(os.path.expanduser(pattern), recursive=True))
+        if matches:
+            return matches[-1]
+    return None
 
 
 def _headless_prefix() -> list[str]:
