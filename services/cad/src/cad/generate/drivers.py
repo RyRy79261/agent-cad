@@ -19,6 +19,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 from cad.generate.base import Driver, Message
 
@@ -80,14 +81,21 @@ class ClaudeCodeDriver:
         # The CLI is single-prompt; fold the running conversation into one turn so
         # retries carry the prior model.py + the error feedback.
         prompt = _flatten_conversation(messages)
-        cmd = [
-            self.bin, "-p", prompt,
-            "--system-prompt", system,
-            "--output-format", "json",
-            # Pure text generation — deny every tool so it never tries to touch
-            # the filesystem or shell, and runs fast.
-            "--disallowedTools", "Bash", "Edit", "Write", "Read", "WebSearch", "WebFetch",
-        ]
+        images = [a for m in messages for a in (m.attachments or ())]
+        cmd = [self.bin, "-p", prompt, "--system-prompt", system, "--output-format", "json"]
+        if images:
+            # Reference image(s) attached (a sketch, an STL render). Point the model at
+            # them and allow ONLY the Read tool — scoped to their dirs — so it can view
+            # them but can't write, run, or browse. The image paths are appended to the
+            # prompt (the `claude -p` arg) since the CLI reads referenced files via Read.
+            prompt += "\n\nReference image(s) — view each with the Read tool before coding:\n" + "\n".join(images)
+            cmd[2] = prompt  # cmd[2] is the -p prompt
+            cmd += ["--allowedTools", "Read"]
+            for d in sorted({str(Path(a).resolve().parent) for a in images}):
+                cmd += ["--add-dir", d]
+        else:
+            # Pure text generation — deny every tool so it never touches the FS/shell.
+            cmd += ["--disallowedTools", "Bash", "Edit", "Write", "Read", "WebSearch", "WebFetch"]
         if self.model:
             cmd += ["--model", self.model]
         if self.effort:

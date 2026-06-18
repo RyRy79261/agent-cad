@@ -75,6 +75,7 @@ def generate_part(
     driver: str | Driver | None = None,
     model: str | None = None,
     effort: str | None = None,
+    attachments: list[str] | None = None,
     max_rounds: int = 2,
     verify: bool = True,
     formats: tuple[str, ...] = DEFAULT_FORMATS,
@@ -116,7 +117,9 @@ def generate_part(
     artifacts_dir = Path(out_dir) if out_dir else dest / "artifacts"
 
     system = build_system_prompt()
-    conversation: list[Message] = [Message("user", build_user_prompt(description))]
+    conversation: list[Message] = [
+        Message("user", build_user_prompt(description), attachments=tuple(attachments or ()))
+    ]
     result = GenerateResult(
         ok=False, driver=drv.name, description=description, dest=str(dest), rounds=0,
         model_path=str(model_path),
