@@ -53,8 +53,19 @@ def list_chats(store: Store) -> list[Chat]:
 
 def delete_chat(store: Store, chat_id: str) -> None:
     d = store.chat_dir(chat_id)
-    if d.exists():
-        shutil.rmtree(d)
+    if not d.exists():
+        return
+    # A still-running job for this chat can write into the dir mid-delete, so a plain
+    # rmtree races ("Directory not empty"). Rename first — that's atomic and makes the
+    # chat vanish instantly (a concurrent get_chat then sees None and won't re-create it)
+    # — then rmtree the moved dir tolerantly.
+    moved = d.with_name(f"{d.name}.deleting-{uuid.uuid4().hex[:6]}")
+    try:
+        d.rename(moved)
+    except OSError:
+        shutil.rmtree(d, ignore_errors=True)
+        return
+    shutil.rmtree(moved, ignore_errors=True)
 
 
 def append_message(

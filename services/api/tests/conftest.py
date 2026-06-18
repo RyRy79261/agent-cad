@@ -20,3 +20,7 @@ os.environ["AGENT_CAD_HOME"] = tempfile.mkdtemp(prefix="agentcad-test-")
 # would be slow, consume tokens, and block interpreter exit on the worker thread.
 os.environ["AGENT_CAD_CLAUDE_BIN"] = "claude-test-unavailable"
 os.environ.pop("AGENT_CAD_LLM_DRIVER", None)
+
+# Keep background-job failure logs (expected, since the driver is intentionally bogus)
+# out of captured stderr — they otherwise erupt during teardown when stderr is closed.
+os.environ["AGENT_CAD_LOG_LEVEL"] = "CRITICAL"
