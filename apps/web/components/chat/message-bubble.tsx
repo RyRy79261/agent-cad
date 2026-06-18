@@ -6,10 +6,21 @@ import { Sparkles, User } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatElapsed } from "./working-indicator";
 
-/** "2:34 PM" from a Unix-seconds timestamp; empty for the optimistic ts=0 placeholder. */
+/**
+ * "2:34 PM" for today; "Jun 17, 2:34 PM" for an earlier day this year; "Jun 17, 2025,
+ * 2:34 PM" for an earlier year. Empty for the optimistic ts=0 placeholder.
+ */
 function formatTime(ts: number): string {
   if (!ts) return "";
-  return new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const d = new Date(ts * 1000);
+  const now = new Date();
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === now.toDateString()) return time;
+  const dateOpts: Intl.DateTimeFormatOptions =
+    d.getFullYear() === now.getFullYear()
+      ? { month: "short", day: "numeric" }
+      : { year: "numeric", month: "short", day: "numeric" };
+  return `${d.toLocaleDateString([], dateOpts)}, ${time}`;
 }
 
 const compact = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n));
@@ -43,10 +54,10 @@ export function MessageBubble({ message }: { message: Message }) {
       >
         {isUser ? <User className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
       </div>
-      <div className={cn("flex max-w-[80%] flex-col gap-1", isUser && "items-end")}>
+      <div className={cn("flex min-w-0 max-w-[80%] flex-col gap-1", isUser && "items-end")}>
         <div
           className={cn(
-            "rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
+            "overflow-hidden whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
             isUser ? "bg-primary text-primary-foreground" : "bg-card text-foreground",
           )}
         >

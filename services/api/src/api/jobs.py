@@ -23,8 +23,12 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from api.logging_setup import get_logger
+
 if TYPE_CHECKING:
     from api.store import Store
+
+_log = get_logger("jobs")
 
 
 class JobStatus(StrEnum):
@@ -174,10 +178,13 @@ class JobStore:
                 )
                 if job.status is JobStatus.FAILED:
                     job.error = result.get("error") if isinstance(result, dict) else None
+            if job.status is JobStatus.FAILED:
+                _log.error("job %s (%s) failed: %s", job.id, job.kind, job.error)
         except Exception:  # noqa: BLE001 - record any worker crash on the job
             with self._lock:
                 job.status = JobStatus.FAILED
                 job.error = traceback.format_exc()
+            _log.exception("job %s (%s) crashed", job.id, job.kind)
         finally:
             with self._lock:
                 job.finished_at = time.time()

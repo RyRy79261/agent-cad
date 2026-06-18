@@ -36,6 +36,7 @@ from api.chats import (
 )
 from api.descriptor import build_descriptor
 from api.jobs import JobStore
+from api.logging_setup import setup_logging
 from api.projects import get_part, list_parts
 from api.registry import (
     default_printer,
@@ -78,6 +79,7 @@ from api.schemas import (
 from api.store import Store
 
 store = Store()
+setup_logging(store.root / "logs")  # rotating log file + stderr → debuggable failures
 jobs = JobStore(store=store)  # durable: survives restart, recovers terminal results
 
 # Where API-triggered builds write their artifacts. Served read-only over HTTP at
