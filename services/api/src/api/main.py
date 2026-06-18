@@ -38,6 +38,7 @@ from api.descriptor import build_descriptor
 from api.jobs import JobStore
 from api.logging_setup import setup_logging
 from api.projects import get_part, list_parts
+from api.references import add_reference, reference_attachments, remove_reference
 from api.registry import (
     default_printer,
     delete_printer,
@@ -690,6 +691,43 @@ def get_chat_artifact(chat_id: str, filename: str) -> FileResponse:
     return FileResponse(str(path))
 
 
+@app.post("/chats/{chat_id}/references", response_model=Chat, tags=["chats"])
+async def add_chat_reference(chat_id: str, file: Annotated[UploadFile, File()]) -> Chat:
+    """Pin an image or STL reference to the chat — applied to every generate/refine."""
+    if get_chat(store, chat_id) is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    data = b""
+    max_bytes = 50 * 1024 * 1024  # 50 MB cap
+    while chunk := await file.read(1024 * 1024):
+        data += chunk
+        if len(data) > max_bytes:
+            raise HTTPException(status_code=413, detail="reference too large (50 MB max)")
+    ref = add_reference(store, chat_id, file.filename or "reference", data)
+    if ref is None:
+        raise HTTPException(status_code=400, detail="unsupported reference (use an image or a .stl file)")
+    result = get_chat(store, chat_id)
+    assert result is not None
+    return result
+
+
+@app.delete("/chats/{chat_id}/references/{ref_id}", response_model=Chat, tags=["chats"])
+def delete_chat_reference(chat_id: str, ref_id: str) -> Chat:
+    chat = remove_reference(store, chat_id, ref_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    return chat
+
+
+@app.get("/chats/{chat_id}/references/{filename}", tags=["chats"])
+def get_chat_reference_file(chat_id: str, filename: str) -> FileResponse:
+    """Serve a reference image/render read-only, guarding path traversal."""
+    rdir = (store.chat_dir(chat_id) / "references").resolve()
+    path = (rdir / filename).resolve()
+    if rdir not in path.parents or not path.is_file():
+        raise HTTPException(status_code=404, detail="reference not found")
+    return FileResponse(str(path))
+
+
 @app.post("/chats/{chat_id}/generate", response_model=JobRef, tags=["chats"])
 def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
     """Generate a model into the chat's namespace (claude-code driver — Claude subscription)."""
@@ -702,9 +740,10 @@ def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
     chat.status = "generating"
     save_chat(store, chat)
     art_dir = store.artifacts_dir(chat_id)
-    prompt = body.prompt
     _settings = load_settings(store)
     sel_model, sel_effort = _settings.active_model, _settings.effort
+    ref_paths, ref_note = reference_attachments(store, chat)  # pinned image/STL references
+    prompt = body.prompt + ref_note
 
     def work() -> dict:
         import time
@@ -720,6 +759,7 @@ def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
             art_dir,
             model=sel_model,
             effort=sel_effort,
+            attachments=ref_paths,
             max_rounds=2,
             verify=True,
             name="model",
@@ -799,6 +839,7 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
     instruction = body.instruction
     _settings = load_settings(store)
     sel_model, sel_effort = _settings.active_model, _settings.effort
+    ref_paths, ref_note = reference_attachments(store, chat)  # pinned image/STL references
 
     def work() -> dict:
         import shutil
@@ -822,10 +863,10 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
             "Make a REAL, visible geometric change that addresses the request — don't return "
             "near-identical code. Update the `# SUMMARY:` first line to tell the user, in plain "
             "language, exactly what you changed. Return the COMPLETE updated model.py (edit, do "
-            "not start over)."
+            "not start over)." + ref_note
         )
         result = generate_part(
-            augmented, art_dir, model=sel_model, effort=sel_effort, max_rounds=2,
+            augmented, art_dir, model=sel_model, effort=sel_effort, attachments=ref_paths, max_rounds=2,
             verify=True, name="model", out_dir=str(art_dir),
         )
         return _attach_build_to_chat(chat_id, result, duration_ms=(time.monotonic() - t_refine0) * 1000)
