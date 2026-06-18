@@ -25,6 +25,7 @@ import { Composer } from "./composer";
 import { ModelSelector } from "./model-selector";
 import { MessageBubble } from "./message-bubble";
 import { WorkingIndicator, formatElapsed } from "./working-indicator";
+import { ReferencesTray } from "./references-tray";
 import { StatusBadge } from "./status-badge";
 import { Stepper } from "./stepper";
 import { PrintSettingsPanel } from "./print-settings-panel";
@@ -37,6 +38,10 @@ const HOW_IT_WORKS = ["Describe", "Refine", "Slice & print"];
 
 /** Generate/refine can take minutes at high effort — poll long before giving up (FR-CHAT-13). */
 const LONG_POLL = { timeoutMs: 600_000 };
+
+/** Files accepted as a pinned reference (images + STL). */
+const REFERENCE_RE = /\.(png|jpe?g|webp|gif|stl)$/i;
+const isReferenceFile = (f: File) => REFERENCE_RE.test(f.name) || f.type.startsWith("image/");
 
 /** Friendly message for a poll timeout — the job keeps running server-side, so don't alarm. */
 function describeError(e: unknown): string {
@@ -78,8 +83,10 @@ export function ChatWorkspace() {
   const [workStartedAt, setWorkStartedAt] = React.useState<number | null>(null);
   const [lastDurationMs, setLastDurationMs] = React.useState<number | null>(null);
 
+  const [dragActive, setDragActive] = React.useState(false);
   const threadEndRef = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const refInputRef = React.useRef<HTMLInputElement>(null);
 
   // --- initial load -------------------------------------------------------- //
   React.useEffect(() => {
@@ -296,6 +303,47 @@ export function ChatWorkspace() {
     [active, refreshChats],
   );
 
+  // Pin an image/STL reference (from the picker, drag-drop, or clipboard paste). Creates a
+  // chat if there isn't one yet so a sketch can be the very first thing you add.
+  const addReferenceFile = React.useCallback(
+    async (file: File) => {
+      setError(null);
+      try {
+        const chatId = active?.id ?? (await api.createChat({ title: "New chat" })).id;
+        setActive(await api.addReference(chatId, file));
+        await refreshChats();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [active, refreshChats],
+  );
+
+  const removeRef = React.useCallback(
+    async (refId: string) => {
+      if (!active) return;
+      try {
+        setActive(await api.removeReference(active.id, refId));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [active],
+  );
+
+  // Paste an image anywhere → pin it as a reference.
+  React.useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const imgs = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
+      if (imgs.length) {
+        e.preventDefault();
+        imgs.forEach((f) => void addReferenceFile(f));
+      }
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [addReferenceFile]);
+
   const slice = React.useCallback(async () => {
     if (!active) return;
     setSlicing(true);
@@ -380,6 +428,18 @@ export function ChatWorkspace() {
           if (file) void importFile(file);
         }}
       />
+      <input
+        ref={refInputRef}
+        type="file"
+        accept="image/*,.stl"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          e.target.value = "";
+          files.filter(isReferenceFile).forEach((f) => void addReferenceFile(f));
+        }}
+      />
       <Sidebar
         chats={chats}
         activeId={active?.id ?? null}
@@ -437,7 +497,32 @@ export function ChatWorkspace() {
           </div>
         </header>
 
-        <div className="flex min-h-0 flex-1">
+        <div
+          className="relative flex min-h-0 flex-1"
+          onDragOver={(e) => {
+            if (Array.from(e.dataTransfer.types).includes("Files")) {
+              e.preventDefault();
+              setDragActive(true);
+            }
+          }}
+          onDragLeave={(e) => {
+            if (e.currentTarget === e.target) setDragActive(false);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragActive(false);
+            Array.from(e.dataTransfer.files)
+              .filter(isReferenceFile)
+              .forEach((f) => void addReferenceFile(f));
+          }}
+        >
+          {dragActive ? (
+            <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-primary/10 backdrop-blur-sm">
+              <div className="rounded-2xl border-2 border-dashed border-primary bg-card px-6 py-4 text-sm font-medium text-foreground">
+                Drop an image or STL to pin it as a reference
+              </div>
+            </div>
+          ) : null}
           {/* thread + composer */}
           <main className="flex min-w-0 flex-1 flex-col">
             {active ? (
@@ -476,6 +561,12 @@ export function ChatWorkspace() {
                 </div>
                 <div className="border-t px-6 py-4">
                   <div className="mx-auto max-w-2xl space-y-3">
+                    <ReferencesTray
+                      references={active.references ?? []}
+                      onRemove={removeRef}
+                      onAdd={() => refInputRef.current?.click()}
+                      disabled={busy}
+                    />
                     {suggestions.length > 0 && !busy ? (
                       <div className="flex flex-wrap gap-2">
                         {suggestions.map((s) => (
@@ -518,15 +609,23 @@ export function ChatWorkspace() {
                     busy={busy}
                     variant="hero"
                   />
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={busy}
-                    className="mt-4 inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-                  >
-                    <Upload className="h-3.5 w-3.5" />
-                    or import an STL file
-                  </button>
+                  <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={busy}
+                      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      import an STL as the model
+                    </button>
+                    <ReferencesTray
+                      references={[]}
+                      onRemove={removeRef}
+                      onAdd={() => refInputRef.current?.click()}
+                      disabled={busy}
+                    />
+                  </div>
                   <div className="mt-8 flex items-center justify-center gap-2 text-[11px] font-medium uppercase tracking-wide text-subtle-foreground">
                     {HOW_IT_WORKS.map((step, i) => (
                       <React.Fragment key={step}>

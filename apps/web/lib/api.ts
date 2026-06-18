@@ -105,6 +105,15 @@ export const chatSlice = (id: string, body: { filament_id?: string; settings?: S
 export const attachImport = (chatId: string, importId: string) =>
   request(`/chats/${chatId}/imports/${importId}/attach`, Chat, jsonInit("POST"));
 
+// --- persistent references (images / STL renders the model views every turn) ---- //
+export async function addReference(chatId: string, file: File): Promise<z.infer<typeof Chat>> {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/chats/${chatId}/references`, Chat, { method: "POST", body: form });
+}
+export const removeReference = (chatId: string, refId: string) =>
+  request(`/chats/${chatId}/references/${refId}`, Chat, jsonInit("DELETE"));
+
 // --- imports + calibration ------------------------------------------------- //
 export async function importStl(file: File): Promise<ImportResult> {
   const form = new FormData();
