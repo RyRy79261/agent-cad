@@ -166,29 +166,27 @@ class JobStore:
             job.status = JobStatus.RUNNING
             job.started_at = time.time()
             self._persist_locked()
+        result: dict[str, Any] | None
+        crashed = False
         try:
             result = fn(*args, **kwargs)
-            with self._lock:
-                job.result = result
-                # A service that returns {"ok": False} is a failed job.
-                job.status = (
-                    JobStatus.FAILED
-                    if isinstance(result, dict) and result.get("ok") is False
-                    else JobStatus.SUCCEEDED
-                )
-                if job.status is JobStatus.FAILED:
-                    job.error = result.get("error") if isinstance(result, dict) else None
-            if job.status is JobStatus.FAILED:
-                _log.error("job %s (%s) failed: %s", job.id, job.kind, job.error)
+            # A service that returns {"ok": False} is a failed job.
+            failed = isinstance(result, dict) and result.get("ok") is False
+            status = JobStatus.FAILED if failed else JobStatus.SUCCEEDED
+            error = result.get("error") if (failed and isinstance(result, dict)) else None
         except Exception:  # noqa: BLE001 - record any worker crash on the job
-            with self._lock:
-                job.status = JobStatus.FAILED
-                job.error = traceback.format_exc()
-            _log.exception("job %s (%s) crashed", job.id, job.kind)
-        finally:
-            with self._lock:
-                job.finished_at = time.time()
-                self._persist_locked()
+            result, status, error, crashed = None, JobStatus.FAILED, traceback.format_exc(), True
+        # Set the terminal state AND persist atomically under one lock. `get()` takes the
+        # same lock, so any caller that observes the terminal status is guaranteed to also
+        # see it written to jobs.json — no window where in-memory is done but disk is stale.
+        with self._lock:
+            job.result = result
+            job.status = status
+            job.error = error
+            job.finished_at = time.time()
+            self._persist_locked()
+        if status is JobStatus.FAILED:
+            _log.error("job %s (%s) %s: %s", job.id, job.kind, "crashed" if crashed else "failed", error)
 
     def get(self, job_id: str) -> Job | None:
         with self._lock:
