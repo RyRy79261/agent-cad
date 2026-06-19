@@ -848,6 +848,7 @@ def _refine_build(
     version (artifacts/history/model.v<N>.py) so nothing is lost."""
     import shutil
     import time
+    import uuid
 
     from cad.generate import generate_part
 
@@ -855,8 +856,10 @@ def _refine_build(
     prior_py = art_dir / "model.py"
     hist = art_dir / "history"
     hist.mkdir(exist_ok=True)
+    # Keep the readable v<N> ordering, but suffix a short unique id so two concurrent refines
+    # on the same chat can't compute the same N and overwrite each other's snapshot.
     n = len(list(hist.glob("model.v*.py"))) + 1
-    shutil.copyfile(prior_py, hist / f"model.v{n}.py")
+    shutil.copyfile(prior_py, hist / f"model.v{n}-{uuid.uuid4().hex[:6]}.py")
     prior = prior_py.read_text(encoding="utf-8")
     augmented = (
         "You are EDITING an existing build123d part — this is a surgical edit, not a "

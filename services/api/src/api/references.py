@@ -89,8 +89,13 @@ def add_reference(store: Store, chat_id: str, filename: str, data: bytes) -> Ref
         stl.write_bytes(data)
         import trimesh
 
-        mesh = trimesh.load(stl, force="mesh")
-        ext3 = [round(float(v), 2) for v in mesh.extents]
+        try:
+            mesh = trimesh.load(stl, force="mesh")
+            ext3 = [round(float(v), 2) for v in mesh.extents]
+        except Exception:  # noqa: BLE001 - a malformed .stl is a controlled rejection, not a 500
+            _log.warning("rejected unparseable STL reference %s", filename)
+            stl.unlink(missing_ok=True)
+            return None
         bbox = {"x": ext3[0], "y": ext3[1], "z": ext3[2]}
         png = rdir / f"{rid}.png"
         rendered = _render_stl_to_png(stl, png)
@@ -116,8 +121,10 @@ def remove_reference(store: Store, chat_id: str, ref_id: str) -> Chat | None:
     chat.references = [r for r in chat.references if r.id != ref_id]
     rdir = store.chat_dir(chat_id) / "references"
     if rdir.exists():
-        for f in rdir.glob(f"{ref_id}.*"):
-            f.unlink(missing_ok=True)
+        # Delete the ref's files by EXACT name per extension — never glob a user-supplied
+        # ``ref_id`` (a '*' would match and delete unrelated references in the chat).
+        for ext in (*_IMAGE_EXTS, ".stl", ".png"):
+            (rdir / f"{ref_id}{ext}").unlink(missing_ok=True)
     return save_chat(store, chat)
 
 
@@ -133,7 +140,7 @@ def reference_attachments(store: Store, chat: Chat) -> tuple[list[str], str]:
                 paths.append(str(p.resolve()))
         if r.kind == "stl" and r.bbox:
             notes.append(
-                f"- '{r.name}': an STL reference, {r.bbox['x']:.0f}×{r.bbox['y']:.0f}×{r.bbox['z']:.0f} mm. "
+                f"- '{r.name}': an STL reference, {r.bbox.x:.0f}×{r.bbox.y:.0f}×{r.bbox.z:.0f} mm. "
                 "Its render shows FOUR views (iso / front / top / right). REPLICATE its actual geometry "
                 "— every hole, cut-out, slot, fitting and feature you can see — not just the overall size."
             )

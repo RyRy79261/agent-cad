@@ -46,7 +46,7 @@ export function ReferencesTray({
             <span className="block truncate text-foreground">{r.name}</span>
             {r.kind === "stl" && r.bbox ? (
               <span className="block text-[10px] text-subtle-foreground">
-                {Math.round(r.bbox.x ?? 0)}×{Math.round(r.bbox.y ?? 0)}×{Math.round(r.bbox.z ?? 0)} mm
+                {Math.round(r.bbox.x)}×{Math.round(r.bbox.y)}×{Math.round(r.bbox.z)} mm
               </span>
             ) : null}
           </span>

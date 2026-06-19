@@ -164,6 +164,14 @@ class ArtifactRef(BaseModel):
     slice_info: dict[str, Any] | None = None
 
 
+class BBox(BaseModel):
+    """A bounding box in millimetres (a dimensional triple, not an arbitrary map)."""
+
+    x: float
+    y: float
+    z: float
+
+
 class Reference(BaseModel):
     """A persistent visual reference pinned to a chat — applied to every generate/refine.
 
@@ -172,10 +180,10 @@ class Reference(BaseModel):
     """
 
     id: str
-    kind: str  # image | stl
+    kind: Literal["image", "stl"]
     name: str
     image_url: str  # /chats/<id>/references/<file> — the viewable image (or STL render)
-    bbox: dict[str, float] | None = None  # mm, for stl references
+    bbox: BBox | None = None  # mm, for stl references
 
 
 class Message(BaseModel):

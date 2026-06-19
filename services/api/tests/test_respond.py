@@ -10,6 +10,12 @@ def test_parse_edit_action():
     assert out == {"action": "edit", "instruction": "make it 6mm thick"}
 
 
+def test_whitespace_only_chat_reply_is_never_blank():
+    # A reply that's all whitespace must not become an empty assistant message.
+    out = _parse_respond('{"action":"chat","reply":"   "}')
+    assert out["action"] == "chat" and out["reply"].strip()
+
+
 def test_parse_chat_action():
     out = _parse_respond('{"action":"chat","reply":"PLA is a good choice here."}')
     assert out == {"action": "chat", "reply": "PLA is a good choice here."}

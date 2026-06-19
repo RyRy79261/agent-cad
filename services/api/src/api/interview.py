@@ -126,7 +126,7 @@ def _parse_respond(reply: str) -> dict:
     if isinstance(data, dict):
         if data.get("action") == "edit" and isinstance(data.get("instruction"), str) and data["instruction"].strip():
             return {"action": "edit", "instruction": data["instruction"].strip()}
-        if data.get("action") == "chat" and isinstance(data.get("reply"), str):
+        if data.get("action") == "chat" and isinstance(data.get("reply"), str) and data["reply"].strip():
             return {"action": "chat", "reply": data["reply"].strip()}
     return {"action": "chat", "reply": "Did you want me to make a change, or talk it through first?"}
 

@@ -308,12 +308,24 @@ export function ChatWorkspace() {
 
   // Pin an image/STL reference (from the picker, drag-drop, or clipboard paste). Creates a
   // chat if there isn't one yet so a sketch can be the very first thing you add.
-  const addReferenceFile = React.useCallback(
-    async (file: File) => {
+  const addReferenceFiles = React.useCallback(
+    async (files: File[]) => {
+      if (!files.length) return;
       setError(null);
       try {
-        const chatId = active?.id ?? (await api.createChat({ title: "New chat" })).id;
-        setActive(await api.addReference(chatId, file));
+        // Resolve/create the target chat ONCE — a multi-file add must not spawn several
+        // chats and split the references across them.
+        let chatId = active?.id;
+        if (!chatId) {
+          const created = await api.createChat({ title: "New chat" });
+          setActive(created);
+          chatId = created.id;
+        }
+        let updated: Chat | null = null;
+        for (const file of files) {
+          updated = await api.addReference(chatId, file);
+        }
+        if (updated) setActive(updated);
         await refreshChats();
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -340,12 +352,12 @@ export function ChatWorkspace() {
       const imgs = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
       if (imgs.length) {
         e.preventDefault();
-        imgs.forEach((f) => void addReferenceFile(f));
+        void addReferenceFiles(imgs);
       }
     };
     document.addEventListener("paste", onPaste);
     return () => document.removeEventListener("paste", onPaste);
-  }, [addReferenceFile]);
+  }, [addReferenceFiles]);
 
   const slice = React.useCallback(async () => {
     if (!active) return;
@@ -440,7 +452,7 @@ export function ChatWorkspace() {
         onChange={(e) => {
           const files = Array.from(e.target.files ?? []);
           e.target.value = "";
-          files.filter(isReferenceFile).forEach((f) => void addReferenceFile(f));
+          void addReferenceFiles(files.filter(isReferenceFile));
         }}
       />
       <Sidebar
@@ -514,9 +526,7 @@ export function ChatWorkspace() {
           onDrop={(e) => {
             e.preventDefault();
             setDragActive(false);
-            Array.from(e.dataTransfer.files)
-              .filter(isReferenceFile)
-              .forEach((f) => void addReferenceFile(f));
+            void addReferenceFiles(Array.from(e.dataTransfer.files).filter(isReferenceFile));
           }}
         >
           {dragActive ? (
