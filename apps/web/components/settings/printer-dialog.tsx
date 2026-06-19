@@ -26,7 +26,7 @@ function blankPrinter(): Printer {
     kind: "FDM",
     build_volume: { x: 220, y: 220, z: 280 },
     nozzle_diameter_mm: 0.4,
-    firmware: "Marlin",
+    firmware: { name: "Marlin (stock)", linear_advance: false, input_shaping: false, arc_moves: false },
     bed_margin_mm: 5,
     default: false,
     filaments: [],
@@ -80,6 +80,8 @@ export function PrinterDialog({ mode, printer, trigger, onSaved }: PrinterDialog
   const set = (patch: Partial<Printer>) => setForm((f) => ({ ...f, ...patch }));
   const setBv = (axis: "x" | "y" | "z", v: number) =>
     setForm((f) => ({ ...f, build_volume: { ...f.build_volume, [axis]: v } }));
+  const setFw = (patch: Partial<Printer["firmware"]>) =>
+    setForm((f) => ({ ...f, firmware: { ...f.firmware, ...patch } }));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -129,9 +131,36 @@ export function PrinterDialog({ mode, printer, trigger, onSaved }: PrinterDialog
             </Field>
           </div>
 
-          <Field label="Firmware">
-            <Input value={form.firmware} onChange={(e) => set({ firmware: e.target.value })} />
-          </Field>
+          <div className="space-y-2.5 rounded-lg border border-border-strong p-3">
+            <Field label="Firmware">
+              <Input
+                value={form.firmware.name}
+                onChange={(e) => setFw({ name: e.target.value })}
+                placeholder="Marlin (stock)"
+              />
+            </Field>
+            <p className="text-[11px] text-muted-foreground">
+              Tell the app what your firmware supports — calibrations needing a capability it lacks are hidden.
+            </p>
+            <Capability
+              label="Linear Advance (Pressure Advance)"
+              hint="M900 K — stock Creality Marlin doesn't have it"
+              checked={form.firmware.linear_advance}
+              onChange={(v) => setFw({ linear_advance: v })}
+            />
+            <Capability
+              label="Input shaping"
+              hint="M593 — ringing / resonance compensation"
+              checked={form.firmware.input_shaping}
+              onChange={(v) => setFw({ input_shaping: v })}
+            />
+            <Capability
+              label="Arc moves (G2/G3)"
+              hint="ARC_SUPPORT — smoother curves, smaller g-code"
+              checked={form.firmware.arc_moves}
+              onChange={(v) => setFw({ arc_moves: v })}
+            />
+          </div>
 
           <div className="flex items-center justify-between">
             <Label className="text-sm">Set as default printer</Label>
@@ -160,6 +189,28 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div className="space-y-1.5">
       <Label className="text-xs text-muted-foreground">{label}</Label>
       {children}
+    </div>
+  );
+}
+
+function Capability({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="min-w-0">
+        <p className="text-sm">{label}</p>
+        <p className="text-[11px] text-muted-foreground">{hint}</p>
+      </div>
+      <Switch checked={checked} onCheckedChange={onChange} />
     </div>
   );
 }

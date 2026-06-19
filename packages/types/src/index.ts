@@ -186,6 +186,19 @@ export const FilamentProfile = z.object({
 });
 export type FilamentProfile = z.infer<typeof FilamentProfile>;
 
+/**
+ * What the machine's firmware can do — mirrors `FirmwareCapabilities`. Load-bearing:
+ * gates calibrations the firmware would silently ignore (e.g. `M900 K` Pressure Advance
+ * on a stock Creality Marlin without LIN_ADVANCE). Defaults = stock Ender 5 S1 (all off).
+ */
+export const FirmwareCapabilities = z.object({
+  name: z.string().default("Marlin (stock)"),
+  linear_advance: z.boolean().default(false),
+  input_shaping: z.boolean().default(false),
+  arc_moves: z.boolean().default(false),
+});
+export type FirmwareCapabilities = z.infer<typeof FirmwareCapabilities>;
+
 /** A registered machine + its filament profiles — mirrors the `Printer` registry record. */
 export const Printer = z.object({
   id: z.string(),
@@ -193,7 +206,11 @@ export const Printer = z.object({
   kind: z.string().default("FDM"),
   build_volume: BuildVolume,
   nozzle_diameter_mm: z.number().default(0.4),
-  firmware: z.string().default("Marlin"),
+  // Back-compat: legacy records stored firmware as a plain name string → coerce to {name}.
+  firmware: z.preprocess(
+    (v) => (typeof v === "string" ? { name: v } : (v ?? {})),
+    FirmwareCapabilities,
+  ),
   bed_margin_mm: z.number().default(5),
   default: z.boolean().default(false),
   filaments: z.array(FilamentProfile).default([]),

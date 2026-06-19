@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class BuildRequest(BaseModel):
@@ -73,11 +73,27 @@ class FilamentProfile(BaseModel):
     default_settings: SliceSettings = Field(default_factory=SliceSettings)
 
 
+class FirmwareCapabilities(BaseModel):
+    """What the machine's firmware can actually do.
+
+    Load-bearing: the app gates calibrations/settings on these so it never offers
+    something the firmware would silently ignore (e.g. ``M900 K`` Pressure Advance on a
+    stock Creality Marlin that wasn't built with ``LIN_ADVANCE``). Defaults match a
+    stock Ender 5 S1 (everything off).
+    """
+
+    name: str = "Marlin (stock)"
+    linear_advance: bool = False  # M900 K — Pressure Advance. Needs LIN_ADVANCE firmware.
+    input_shaping: bool = False  # M593 — ringing/fast-tower. Needs input-shaper firmware.
+    arc_moves: bool = False  # G2/G3 arc fitting — needs ARC_SUPPORT firmware.
+
+
 class Printer(BaseModel):
     """A registered machine + its filament profiles (the net-new registry record).
 
     Replaces the hardcoded ``ENDER_5_S1`` constant. ``nozzle_diameter_mm`` and
-    ``firmware`` are net-new display/registry fields the frozen constant lacks.
+    ``firmware`` are net-new fields the frozen constant lacks; ``firmware`` is now a
+    capability block (was a plain display string — legacy string records are coerced).
     """
 
     id: str
@@ -85,10 +101,18 @@ class Printer(BaseModel):
     kind: str = "FDM"
     build_volume: BuildVolume
     nozzle_diameter_mm: float = Field(default=0.4, gt=0)
-    firmware: str = "Marlin"  # editable display metadata; not load-bearing for slicing
+    firmware: FirmwareCapabilities = Field(default_factory=FirmwareCapabilities)
     bed_margin_mm: float = Field(default=5.0, ge=0)
     default: bool = False
     filaments: list[FilamentProfile] = Field(default_factory=list)
+
+    @field_validator("firmware", mode="before")
+    @classmethod
+    def _coerce_firmware(cls, v: object) -> object:
+        # Back-compat: legacy registry records stored firmware as a plain name string.
+        if isinstance(v, str):
+            return {"name": v}
+        return v
 
 
 class Settings(BaseModel):

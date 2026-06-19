@@ -160,7 +160,7 @@ export default function PrinterDetailPage() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Build volume" value={`${bv.x}×${bv.y}×${bv.z}`} />
         <Stat label="Nozzle" value={`${printer.nozzle_diameter_mm} mm`} />
-        <Stat label="Firmware" value={printer.firmware} />
+        <Stat label="Firmware" value={printer.firmware.name} />
         <Stat label="Filaments" value={String(printer.filaments.length)} />
       </div>
 

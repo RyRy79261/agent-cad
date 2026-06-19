@@ -10,7 +10,14 @@ from __future__ import annotations
 
 import re
 
-from api.schemas import BuildVolume, FilamentProfile, Printer, Settings, SliceSettings
+from api.schemas import (
+    BuildVolume,
+    FilamentProfile,
+    FirmwareCapabilities,
+    Printer,
+    Settings,
+    SliceSettings,
+)
 from api.store import Store
 
 
@@ -58,7 +65,9 @@ def seed_ender5s1() -> Printer:
         kind="FDM",
         build_volume=BuildVolume(x=bv.x, y=bv.y, z=bv.z),
         nozzle_diameter_mm=0.4,
-        firmware="Marlin",
+        # Stock Creality Marlin: no Linear Advance / input shaping (the printer is not
+        # ours to reflash) — so PA / input-shaping calibrations stay gated off.
+        firmware=FirmwareCapabilities(name="Creality Marlin (stock)"),
         bed_margin_mm=ENDER_5_S1.bed_margin_mm,
         default=True,
         filaments=[_seed_pla()],

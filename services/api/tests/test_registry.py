@@ -47,6 +47,31 @@ def test_seeded_printer_is_ender_default_with_pla(tmp_path):
     assert fil.settings.flow == 0.95 and fil.settings.bed_temp == 60
 
 
+def test_seeded_printer_firmware_is_stock_ender(tmp_path):
+    """The Ender 5 S1 seed reports stock firmware — PA / input-shaping off (not ours to reflash)."""
+    s = Store(tmp_path)
+    seed_first_run(s)
+    p = default_printer(s)
+    assert p.firmware.name == "Creality Marlin (stock)"
+    assert p.firmware.linear_advance is False
+    assert p.firmware.input_shaping is False
+
+
+def test_firmware_legacy_string_coerces(tmp_path):
+    """Back-compat: registry records that stored firmware as a plain name string still load."""
+    from api.schemas import Printer
+
+    p = Printer.model_validate(
+        {"id": "x", "name": "X", "build_volume": {"x": 200, "y": 200, "z": 200}, "firmware": "Marlin"}
+    )
+    assert p.firmware.name == "Marlin"
+    assert p.firmware.linear_advance is False
+    # round-trips through the store as the capability object now
+    s = Store(tmp_path)
+    save_printer(s, p)
+    assert get_printer(s, "x").firmware.name == "Marlin"
+
+
 def test_settings_roundtrip(tmp_path):
     s = Store(tmp_path)
     save_settings(s, Settings(active_model="claude-opus-4-8", auto_clear_days=30, theme="dark"))
