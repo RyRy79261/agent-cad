@@ -777,8 +777,9 @@ def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
         from api.interview import interview_turn
 
         # claude-code (subscription); model + effort from settings, passed explicitly.
+        # Reference renders are passed so the interview can SEE an STL and engage about it.
         t0 = time.monotonic()
-        result = interview_turn(brief, model=sel_model, effort=sel_effort)
+        result = interview_turn(brief, attachments=ref_paths, ref_note=ref_note, model=sel_model, effort=sel_effort)
         dur_ms = (time.monotonic() - t0) * 1000
         ready = result.get("status") != "question" or rounds >= 6  # cap at 6 questions
         if not ready:
