@@ -745,27 +745,11 @@ def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
     ref_paths, ref_note = reference_attachments(store, chat)  # pinned image/STL references
     prompt = body.prompt + ref_note
 
+    # claude-code driver (the user's Claude subscription, no metered API key); model + effort
+    # come from settings and are passed EXPLICITLY so generation doesn't inherit a stray
+    # CLAUDE_EFFORT from the launching shell.
     def work() -> dict:
-        import time
-
-        from cad.generate import generate_part
-
-        # claude-code driver (the user's Claude subscription, no metered API key);
-        # model + effort come from settings and are passed EXPLICITLY so generation
-        # doesn't inherit a stray CLAUDE_EFFORT from the launching shell.
-        t0 = time.monotonic()
-        result = generate_part(
-            prompt,
-            art_dir,
-            model=sel_model,
-            effort=sel_effort,
-            attachments=ref_paths,
-            max_rounds=2,
-            verify=True,
-            name="model",
-            out_dir=str(art_dir),
-        )
-        return _attach_build_to_chat(chat_id, result, duration_ms=(time.monotonic() - t0) * 1000)
+        return _generate_build(chat_id, art_dir, prompt, model=sel_model, effort=sel_effort, attachments=ref_paths)
 
     job = jobs.submit("cad.generate", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
@@ -782,8 +766,10 @@ def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
     assert chat is not None
     rounds = sum(1 for m in chat.messages if m.role == "assistant" and m.quick_replies is not None)
     brief = "\n".join(m.content for m in chat.messages if m.role == "user")
+    art_dir = store.artifacts_dir(chat_id)
     _settings = load_settings(store)
     sel_model, sel_effort = _settings.active_model, _settings.effort
+    ref_paths, ref_note = reference_attachments(store, chat)  # references attached pre-generation
 
     def work() -> dict:
         import time
@@ -795,30 +781,149 @@ def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
         result = interview_turn(brief, model=sel_model, effort=sel_effort)
         dur_ms = (time.monotonic() - t0) * 1000
         ready = result.get("status") != "question" or rounds >= 6  # cap at 6 questions
+        if not ready:
+            append_message(
+                store, chat_id, "assistant", result["question"],
+                quick_replies=result.get("suggestions") or [],
+                usage=result.get("usage"), duration_ms=dur_ms,
+            )
+            c2 = get_chat(store, chat_id)
+            if c2 is not None:
+                c2.status = "interviewing"
+                save_chat(store, c2)
+            return {"ok": True, "ready": False, "question": result.get("question"),
+                    "suggestions": result.get("suggestions")}
+        # Ready → generate INLINE in this same job. The user's brief is already on the thread
+        # (appended above), so we don't re-post it — this is what fixed the duplicate message.
         c = get_chat(store, chat_id)
         if c is not None:
-            if not ready:
-                append_message(
-                    store, chat_id, "assistant", result["question"],
-                    quick_replies=result.get("suggestions") or [],
-                    usage=result.get("usage"), duration_ms=dur_ms,
-                )
-                c2 = get_chat(store, chat_id)
-                if c2 is not None:
-                    c2.status = "interviewing"
-                    save_chat(store, c2)
-            else:
-                c.status = "interviewed"
-                save_chat(store, c)
-        return {
-            "ok": True,
-            "ready": ready,
-            "question": result.get("question") if not ready else None,
-            "suggestions": result.get("suggestions") if not ready else None,
-            "resolved_prompt": brief if ready else None,
-        }
+            c.status = "generating"
+            save_chat(store, c)
+        return _generate_build(chat_id, art_dir, brief + ref_note, model=sel_model, effort=sel_effort,
+                               attachments=ref_paths)
 
     job = jobs.submit("chat.interview", work, chat_id=chat_id)
+    return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
+
+
+def _generate_build(
+    chat_id: str, art_dir: Path, prompt: str, *, model: str | None, effort: str | None, attachments: list[str]
+) -> dict:
+    """Generate a fresh model into the chat and post the result. The user's message must already
+    be on the thread — this does NOT append it (avoids the interview→generate double-post)."""
+    import time
+
+    from cad.generate import generate_part
+
+    t0 = time.monotonic()
+    result = generate_part(
+        prompt, art_dir, model=model, effort=effort, attachments=attachments, max_rounds=2,
+        verify=True, name="model", out_dir=str(art_dir),
+    )
+    return _attach_build_to_chat(chat_id, result, duration_ms=(time.monotonic() - t0) * 1000)
+
+
+def _current_model_summary(art_dir: Path) -> str:
+    """The current model's `# SUMMARY:` line (what exists now) — context for the respond classifier."""
+    model_py = art_dir / "model.py"
+    if not model_py.exists():
+        return ""
+    from cad.generate.base import extract_summary
+
+    return extract_summary(model_py.read_text(encoding="utf-8")) or ""
+
+
+def _refine_build(
+    chat_id: str,
+    art_dir: Path,
+    instruction: str,
+    *,
+    model: str | None,
+    effort: str | None,
+    attachments: list[str],
+    ref_note: str,
+) -> dict:
+    """Surgically edit the chat's current model.py and post the result. Snapshots the prior
+    version (artifacts/history/model.v<N>.py) so nothing is lost."""
+    import shutil
+    import time
+
+    from cad.generate import generate_part
+
+    t0 = time.monotonic()
+    prior_py = art_dir / "model.py"
+    hist = art_dir / "history"
+    hist.mkdir(exist_ok=True)
+    n = len(list(hist.glob("model.v*.py"))) + 1
+    shutil.copyfile(prior_py, hist / f"model.v{n}.py")
+    prior = prior_py.read_text(encoding="utf-8")
+    augmented = (
+        "You are EDITING an existing build123d part — this is a surgical edit, not a "
+        "redesign. Here is its current `model.py`:\n\n"
+        f"```python\n{prior.strip()}\n```\n\n"
+        "Make EXACTLY this change, and nothing else:\n\n"
+        f"{instruction.strip()}\n\n"
+        "RULES (critical):\n"
+        "- Preserve every OTHER feature, parameter, dimension and detail of the current model "
+        "EXACTLY as-is. Do not remove, rename, resize, simplify, re-interpret, or 'improve' "
+        "anything the request didn't explicitly ask to change.\n"
+        "- Treat the request additively where possible: 'add a fence' means ADD a fence and "
+        "leave the tray, brackets, fittings, holes and everything else untouched.\n"
+        "- Keep the existing DEFAULTS / PARAMS; add new parameters ONLY for the new feature.\n"
+        "- If the requested change is impossible or conflicts with the existing geometry, do "
+        "NOT guess — keep the model as-is and explain the conflict in the `# SUMMARY:` line.\n"
+        "Update the `# SUMMARY:` first line to say plainly what you changed (and confirm what "
+        "you kept). Return the COMPLETE updated model.py." + ref_note
+    )
+    result = generate_part(
+        augmented, art_dir, model=model, effort=effort, attachments=attachments, max_rounds=2,
+        verify=True, name="model", out_dir=str(art_dir),
+    )
+    return _attach_build_to_chat(chat_id, result, duration_ms=(time.monotonic() - t0) * 1000)
+
+
+@app.post("/chats/{chat_id}/respond", response_model=JobRef, tags=["chats"])
+def chat_respond(chat_id: str, body: ChatRefineIn) -> JobRef:
+    """A message on an existing model: the agent either TALKS BACK (answer/discuss/ask) or, when
+    you clearly want a change, makes a surgical edit. Replaces 'every message regenerates'."""
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    art_dir = store.artifacts_dir(chat_id)
+    if not (art_dir / "model.py").exists():
+        raise HTTPException(status_code=409, detail="no model yet — generate one first")
+    append_message(store, chat_id, "user", body.instruction)
+    message = body.instruction
+    summary = _current_model_summary(art_dir)
+    _settings = load_settings(store)
+    sel_model, sel_effort = _settings.active_model, _settings.effort
+    ref_paths, ref_note = reference_attachments(store, chat)
+
+    def work() -> dict:
+        import time
+
+        from api.interview import respond_turn
+
+        t0 = time.monotonic()
+        decision = respond_turn(message, summary, model=sel_model, effort=sel_effort)
+        if decision.get("action") == "edit":
+            # Mark generating so the UI shows the build state, then do the surgical edit.
+            c = get_chat(store, chat_id)
+            if c is not None:
+                c.status = "generating"
+                save_chat(store, c)
+            return _refine_build(
+                chat_id, art_dir, decision.get("instruction") or message,
+                model=sel_model, effort=sel_effort, attachments=ref_paths, ref_note=ref_note,
+            )
+        # Conversational turn — reply in words, no regeneration.
+        append_message(
+            store, chat_id, "assistant", decision.get("reply") or "…",
+            usage=decision.get("usage"), duration_ms=(time.monotonic() - t0) * 1000,
+        )
+        return {"ok": True, "action": "chat"}
+
+    job = jobs.submit("chat.respond", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
 
 
@@ -842,42 +947,10 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
     ref_paths, ref_note = reference_attachments(store, chat)  # pinned image/STL references
 
     def work() -> dict:
-        import shutil
-        import time
-
-        from cad.generate import generate_part
-
-        t_refine0 = time.monotonic()
-        prior_py = art_dir / "model.py"
-        # Keep every version: snapshot the prior source before overwriting (refine v<N>).
-        hist = art_dir / "history"
-        hist.mkdir(exist_ok=True)
-        n = len(list(hist.glob("model.v*.py"))) + 1
-        shutil.copyfile(prior_py, hist / f"model.v{n}.py")
-        prior = prior_py.read_text(encoding="utf-8")
-        augmented = (
-            "You are EDITING an existing build123d part — this is a surgical edit, not a "
-            "redesign. Here is its current `model.py`:\n\n"
-            f"```python\n{prior.strip()}\n```\n\n"
-            "Make EXACTLY this change, and nothing else:\n\n"
-            f"{instruction.strip()}\n\n"
-            "RULES (critical):\n"
-            "- Preserve every OTHER feature, parameter, dimension and detail of the current model "
-            "EXACTLY as-is. Do not remove, rename, resize, simplify, re-interpret, or 'improve' "
-            "anything the request didn't explicitly ask to change.\n"
-            "- Treat the request additively where possible: 'add a fence' means ADD a fence and "
-            "leave the tray, brackets, fittings, holes and everything else untouched.\n"
-            "- Keep the existing DEFAULTS / PARAMS; add new parameters ONLY for the new feature.\n"
-            "- If the requested change is impossible or conflicts with the existing geometry, do "
-            "NOT guess — keep the model as-is and explain the conflict in the `# SUMMARY:` line.\n"
-            "Update the `# SUMMARY:` first line to say plainly what you changed (and confirm what "
-            "you kept). Return the COMPLETE updated model.py." + ref_note
+        return _refine_build(
+            chat_id, art_dir, instruction, model=sel_model, effort=sel_effort,
+            attachments=ref_paths, ref_note=ref_note,
         )
-        result = generate_part(
-            augmented, art_dir, model=sel_model, effort=sel_effort, attachments=ref_paths, max_rounds=2,
-            verify=True, name="model", out_dir=str(art_dir),
-        )
-        return _attach_build_to_chat(chat_id, result, duration_ms=(time.monotonic() - t_refine0) * 1000)
 
     job = jobs.submit("cad.refine", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)

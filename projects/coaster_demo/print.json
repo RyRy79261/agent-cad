@@ -1,0 +1,25 @@
+{
+  "status": "designed",
+  "_status_values": [
+    "designed",
+    "sliced",
+    "printing",
+    "printed-ok",
+    "printed-fail"
+  ],
+  "printer": "Creality Ender 5 S1",
+  "slicer": "orca",
+  "machine_profile": "Creality Ender-5 S1 0.4 nozzle",
+  "process_profile": "0.20mm Standard @Creality Ender-5 S1 0.4",
+  "filament": {
+    "material": "PLA",
+    "rationale": "Default starter material."
+  },
+  "settings": {
+    "layer_height_mm": 0.2,
+    "walls": 4,
+    "infill_percent": 20,
+    "infill_pattern": "gyroid"
+  },
+  "notes": "Generated from a free-text prompt. Sanity-check dimensions before printing."
+}

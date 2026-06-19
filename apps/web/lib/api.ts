@@ -98,6 +98,9 @@ export const chatGenerate = (id: string, prompt: string) =>
   request(`/chats/${id}/generate`, JobRef, jsonInit("POST", { prompt }));
 export const chatRefine = (id: string, instruction: string) =>
   request(`/chats/${id}/refine`, JobRef, jsonInit("POST", { instruction }));
+/** A message on an existing model: the agent talks back, or surgically edits when you want a change. */
+export const chatRespond = (id: string, instruction: string) =>
+  request(`/chats/${id}/respond`, JobRef, jsonInit("POST", { instruction }));
 export const chatInterview = (id: string, prompt: string) =>
   request(`/chats/${id}/interview`, JobRef, jsonInit("POST", { prompt }));
 export const chatSlice = (id: string, body: { filament_id?: string; settings?: SliceSettings } = {}) =>

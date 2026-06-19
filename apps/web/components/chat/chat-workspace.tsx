@@ -197,20 +197,22 @@ export function ChatWorkspace() {
     [refreshChats],
   );
 
-  const refine = React.useCallback(
-    async (chatId: string, instruction: string) => {
-      setGenerating(true);
-      setTab("model");
+  // A message on an existing model: the agent either talks back (a question, an opinion,
+  // ideation) or makes a surgical edit — it no longer regenerates on every message.
+  const respond = React.useCallback(
+    async (chatId: string, text: string) => {
+      setInterviewing(true);
       setError(null);
       try {
-        await api.runJob(() => api.chatRefine(chatId, instruction), LONG_POLL);
+        const job = await api.runJob(() => api.chatRespond(chatId, text), LONG_POLL);
+        if (job.result?.action !== "chat") setTab("model"); // an edit produced a new model
         setActive(await api.getChat(chatId));
         await refreshChats();
       } catch (e) {
         setError(describeError(e));
         await refreshChats();
       } finally {
-        setGenerating(false);
+        setInterviewing(false);
       }
     },
     [refreshChats],
@@ -223,19 +225,20 @@ export function ChatWorkspace() {
       setInterviewing(true);
       setError(null);
       try {
-        const job = await api.runJob(() => api.chatInterview(chatId, text));
-        const ready = Boolean(job.result?.ready);
-        const resolved = (job.result?.resolved_prompt as string | undefined) ?? text;
-        setActive(await api.getChat(chatId));
+        // One job: it asks a follow-up, OR (when ready) generates inline — so poll long.
+        await api.runJob(() => api.chatInterview(chatId, text), LONG_POLL);
+        const updated = await api.getChat(chatId);
+        setActive(updated);
+        if (updated.current_stl) setTab("model"); // ready → it generated a model
         await refreshChats();
-        if (ready) await generate(chatId, resolved);
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(describeError(e));
+        await refreshChats();
       } finally {
         setInterviewing(false);
       }
     },
-    [generate, refreshChats],
+    [refreshChats],
   );
 
   const handleSubmit = React.useCallback(
@@ -253,7 +256,7 @@ export function ChatWorkspace() {
           await refreshChats();
           await interview(chat.id, text);
         } else if (active.current_stl) {
-          await refine(active.id, text); // model exists → refine
+          await respond(active.id, text); // model exists → talk back, or surgically edit
         } else {
           await interview(active.id, text); // mid-interview / pre-model → another clarify turn
         }
@@ -265,7 +268,7 @@ export function ChatWorkspace() {
         setPendingText(null);
       }
     },
-    [active, interview, refine, refreshChats],
+    [active, interview, respond, refreshChats],
   );
 
   // "Skip & generate now" — bypass further questions, generate from the brief so far.
