@@ -30,7 +30,11 @@ def references_dir(store: Store, chat_id: str) -> Path:
 
 
 def _render_stl_to_png(stl_path: Path, png_path: Path) -> bool:
-    """Headless STL → PNG via matplotlib (Agg, no GL). Best-effort; False on failure."""
+    """Headless STL → a 4-view PNG (iso / front / top / right) via matplotlib (Agg, no GL).
+
+    Multiple labelled angles so the model can read the *actual geometry* — holes, cut-outs,
+    fittings — not just the silhouette. Best-effort; False on failure.
+    """
     try:
         import matplotlib
 
@@ -40,19 +44,26 @@ def _render_stl_to_png(stl_path: Path, png_path: Path) -> bool:
         from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
         mesh = trimesh.load(stl_path, force="mesh")
-        fig = plt.figure(figsize=(4, 4))
-        ax = fig.add_subplot(111, projection="3d")
-        ax.add_collection3d(
-            Poly3DCollection(mesh.triangles, facecolor="#8fb3d9", edgecolor="#33506e", linewidths=0.1, alpha=0.95)
-        )
         lo, hi = mesh.bounds
-        ax.set_xlim(lo[0], hi[0])
-        ax.set_ylim(lo[1], hi[1])
-        ax.set_zlim(lo[2], hi[2])
-        ax.set_box_aspect(tuple(max(e, 1e-3) for e in mesh.extents))
-        ax.view_init(elev=22, azim=-58)
-        ax.set_axis_off()
-        fig.savefig(png_path, dpi=80, bbox_inches="tight")
+        aspect = tuple(max(e, 1e-3) for e in mesh.extents)
+        views = [("iso", 24, -58), ("front (−Y)", 6, -90), ("top (+Z)", 88, -90), ("right (+X)", 6, 0)]
+        fig = plt.figure(figsize=(8, 8))
+        for i, (label, elev, azim) in enumerate(views, 1):
+            ax = fig.add_subplot(2, 2, i, projection="3d")
+            ax.add_collection3d(
+                Poly3DCollection(
+                    mesh.triangles, facecolor="#9cc0e6", edgecolor="#2d4a6b", linewidths=0.15, alpha=0.97
+                )
+            )
+            ax.set_xlim(lo[0], hi[0])
+            ax.set_ylim(lo[1], hi[1])
+            ax.set_zlim(lo[2], hi[2])
+            ax.set_box_aspect(aspect)
+            ax.view_init(elev=elev, azim=azim)
+            ax.set_axis_off()
+            ax.set_title(label, fontsize=9, color="#33506e")
+        fig.tight_layout()
+        fig.savefig(png_path, dpi=95, facecolor="white")
         plt.close(fig)
         return True
     except Exception:  # noqa: BLE001 - rendering is best-effort; dims still help
@@ -122,10 +133,14 @@ def reference_attachments(store: Store, chat: Chat) -> tuple[list[str], str]:
                 paths.append(str(p.resolve()))
         if r.kind == "stl" and r.bbox:
             notes.append(
-                f"- '{r.name}': an STL reference ({r.bbox['x']:.0f}×{r.bbox['y']:.0f}×{r.bbox['z']:.0f} mm) — "
-                "view its render for the shape"
+                f"- '{r.name}': an STL reference, {r.bbox['x']:.0f}×{r.bbox['y']:.0f}×{r.bbox['z']:.0f} mm. "
+                "Its render shows FOUR views (iso / front / top / right). REPLICATE its actual geometry "
+                "— every hole, cut-out, slot, fitting and feature you can see — not just the overall size."
             )
         else:
             notes.append(f"- '{r.name}': a reference image")
-    note = ("\n\nPinned references for this design (view each with Read):\n" + "\n".join(notes)) if notes else ""
+    note = (
+        "\n\nPinned references for this design — VIEW each render with the Read tool before coding:\n"
+        + "\n".join(notes)
+    ) if notes else ""
     return paths, note

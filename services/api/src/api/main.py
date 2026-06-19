@@ -856,14 +856,22 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
         shutil.copyfile(prior_py, hist / f"model.v{n}.py")
         prior = prior_py.read_text(encoding="utf-8")
         augmented = (
-            "Refine an EXISTING build123d part. Here is the current `model.py`:\n\n"
+            "You are EDITING an existing build123d part — this is a surgical edit, not a "
+            "redesign. Here is its current `model.py`:\n\n"
             f"```python\n{prior.strip()}\n```\n\n"
-            "Apply this change, keeping everything else intact and still parametric:\n\n"
+            "Make EXACTLY this change, and nothing else:\n\n"
             f"{instruction.strip()}\n\n"
-            "Make a REAL, visible geometric change that addresses the request — don't return "
-            "near-identical code. Update the `# SUMMARY:` first line to tell the user, in plain "
-            "language, exactly what you changed. Return the COMPLETE updated model.py (edit, do "
-            "not start over)." + ref_note
+            "RULES (critical):\n"
+            "- Preserve every OTHER feature, parameter, dimension and detail of the current model "
+            "EXACTLY as-is. Do not remove, rename, resize, simplify, re-interpret, or 'improve' "
+            "anything the request didn't explicitly ask to change.\n"
+            "- Treat the request additively where possible: 'add a fence' means ADD a fence and "
+            "leave the tray, brackets, fittings, holes and everything else untouched.\n"
+            "- Keep the existing DEFAULTS / PARAMS; add new parameters ONLY for the new feature.\n"
+            "- If the requested change is impossible or conflicts with the existing geometry, do "
+            "NOT guess — keep the model as-is and explain the conflict in the `# SUMMARY:` line.\n"
+            "Update the `# SUMMARY:` first line to say plainly what you changed (and confirm what "
+            "you kept). Return the COMPLETE updated model.py." + ref_note
         )
         result = generate_part(
             augmented, art_dir, model=sel_model, effort=sel_effort, attachments=ref_paths, max_rounds=2,

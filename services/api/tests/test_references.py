@@ -35,7 +35,7 @@ def test_image_and_stl_references(tmp_path: Path) -> None:
     assert chat is not None and len(chat.references) == 2
     paths, note = reference_attachments(s, chat)
     assert all(Path(p).exists() for p in paths)
-    assert "STL reference (20×30×40 mm)" in note and "reference image" in note
+    assert "STL reference, 20×30×40 mm" in note and "reference image" in note
 
     remove_reference(s, chat.id, r2.id)
     chat = get_chat(s, chat.id)
