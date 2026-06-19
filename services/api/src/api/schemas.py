@@ -68,9 +68,19 @@ class FilamentProfile(BaseModel):
     name: str
     material: str  # PLA | PETG | ASA | ABS | TPU …
     brand: str | None = None
-    color: str | None = None
+    color: str | None = None  # a spool label (not an OrcaSlicer setting) — e.g. "Black"
+    base_preset: str | None = None  # OrcaSlicer filament preset name this is based on
     settings: SliceSettings = Field(default_factory=SliceSettings)
     default_settings: SliceSettings = Field(default_factory=SliceSettings)
+
+
+class FilamentPreset(BaseModel):
+    """A selectable OrcaSlicer filament preset (read from the local install, not redistributed)."""
+
+    id: str  # the preset name (unique within OrcaSlicer)
+    name: str
+    vendor: str
+    material: str | None = None
 
 
 class FirmwareCapabilities(BaseModel):

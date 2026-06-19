@@ -180,11 +180,21 @@ export const FilamentProfile = z.object({
   name: z.string(),
   material: z.string(),
   brand: z.string().nullish(),
-  color: z.string().nullish(),
+  color: z.string().nullish(), // a spool label (not an OrcaSlicer setting) — e.g. "Black"
+  base_preset: z.string().nullish(), // OrcaSlicer filament preset name this is based on
   settings: SliceSettings.default({}),
   default_settings: SliceSettings.default({}),
 });
 export type FilamentProfile = z.infer<typeof FilamentProfile>;
+
+/** A selectable OrcaSlicer filament preset (read from the local install) — mirrors `FilamentPreset`. */
+export const FilamentPreset = z.object({
+  id: z.string(),
+  name: z.string(),
+  vendor: z.string(),
+  material: z.string().nullish(),
+});
+export type FilamentPreset = z.infer<typeof FilamentPreset>;
 
 /**
  * What the machine's firmware can do — mirrors `FirmwareCapabilities`. Load-bearing:

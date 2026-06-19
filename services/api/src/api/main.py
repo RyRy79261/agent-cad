@@ -64,6 +64,7 @@ from api.schemas import (
     ChatRefineIn,
     ChatSliceIn,
     ExtractRequest,
+    FilamentPreset,
     FilamentProfile,
     GenerateRequest,
     JobRef,
@@ -302,6 +303,23 @@ def delete_filament_ep(printer_id: str, filament_id: str) -> Printer:
     return printer
 
 
+@app.get(
+    "/printers/{printer_id}/filament-presets",
+    response_model=list[FilamentPreset],
+    tags=["printers"],
+)
+def list_filament_presets_ep(printer_id: str) -> list[FilamentPreset]:
+    """OrcaSlicer filament presets compatible with this printer, read from the user's local
+    install (not redistributed). Empty when OrcaSlicer isn't found or the printer has no
+    OrcaSlicer machine mapping — the UI then offers a custom filament only."""
+    from slicer.orca_presets import list_filament_presets, machine_name_for
+
+    machine = machine_name_for(printer_id)
+    if not machine:
+        return []
+    return [FilamentPreset(**p) for p in list_filament_presets(machine)]
+
+
 # --------------------------------------------------------------------------- #
 # CAD                                                                          #
 # --------------------------------------------------------------------------- #
@@ -371,6 +389,7 @@ def _slice_stl(
     settings: SliceSettings | None = None,
     *,
     chat_id: str | None = None,
+    filament_preset: dict | None = None,
 ) -> JobRef:
     """Slice an STL for the Ender 5 S1 into ``out_dir``, serving the g-code under ``url_prefix``.
 
@@ -387,7 +406,7 @@ def _slice_stl(
     resolved = settings or SliceSettings()
 
     def work() -> dict:
-        result = _run_slice_inline(stl, out_dir, url_prefix, resolved)
+        result = _run_slice_inline(stl, out_dir, url_prefix, resolved, filament_preset=filament_preset)
         if chat_id is not None:
             _update_chat_after_slice(chat_id, result, result.get("gcode_path"))
         return result
@@ -396,12 +415,21 @@ def _slice_stl(
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
 
 
-def _run_slice_inline(stl: Path, out_dir: Path, url_prefix: str, settings: SliceSettings) -> dict:
+def _run_slice_inline(
+    stl: Path,
+    out_dir: Path,
+    url_prefix: str,
+    settings: SliceSettings,
+    *,
+    filament_preset: dict | None = None,
+) -> dict:
     """The slice computation itself (no job, no chat side-effects) — returns the result dict.
 
     Reused by the job-based slice routes (:func:`_slice_stl`) and by ``/calibrate`` (which
     builds/stages a reference object then slices it in one job). Adds ``gcode_url`` under
-    ``url_prefix`` and fills ``layer_count`` from the extracted g-code (API-5).
+    ``url_prefix`` and fills ``layer_count`` from the extracted g-code (API-5). When
+    ``filament_preset`` is given (a flattened OrcaSlicer filament preset the user picked), it
+    becomes the filament base the per-slice overrides are applied on top of.
     """
     from slicer import orca
     from slicer.extract import count_gcode_layers
@@ -417,6 +445,12 @@ def _run_slice_inline(stl: Path, out_dir: Path, url_prefix: str, settings: Slice
     raw = settings.raw or {}
     archive = out_dir / f"{stl.stem}.gcode.3mf"
     profiles = ender5s1_profiles()
+    if filament_preset:  # the user picked an OrcaSlicer preset — write it as the filament base
+        import json
+
+        preset_base = out_dir / "_filament_preset.json"
+        preset_base.write_text(json.dumps(filament_preset, indent=2) + "\n", encoding="utf-8")
+        profiles = {**profiles, "filament": preset_base}
     paths = dict(profiles)  # machine / process / filament -> Path
     raw_overrides, warnings = route_raw_overrides(raw)
     merged = merge_overrides(slice_overrides(**typed), raw_overrides)  # raw wins
@@ -612,6 +646,25 @@ def _resolve_filament_settings(chat: Chat, body: ChatSliceIn | None) -> SliceSet
         if fil is not None:
             return fil.settings
     return SliceSettings()
+
+
+def _resolve_filament_preset_config(chat: Chat, body: ChatSliceIn | None) -> dict | None:
+    """The FLATTENED OrcaSlicer filament config for the chat's chosen filament, if it has a
+    ``base_preset`` (else None → slice on the committed default filament). Flattened because
+    OrcaSlicer won't resolve a loose preset's ``inherits`` chain itself."""
+    fil_id = (body.filament_id if body else None) or chat.filament_id
+    printer = get_printer(store, chat.printer_id) if chat.printer_id else default_printer(store)
+    if printer is None:
+        return None
+    fil = next((f for f in printer.filaments if f.id == fil_id), None) if fil_id else None
+    if fil is None and printer.filaments:
+        fil = printer.filaments[0]
+    if fil is None or not fil.base_preset:
+        return None
+    from slicer.orca_presets import machine_name_for, resolve_filament_preset
+
+    machine = machine_name_for(printer.id)
+    return resolve_filament_preset(fil.base_preset, machine) if machine else None
 
 
 def _attach_build_to_chat(chat_id: str, result_obj: object, duration_ms: float | None = None) -> dict:
@@ -885,9 +938,12 @@ def chat_slice(chat_id: str, body: ChatSliceIn | None = None) -> JobRef:
     art_dir = store.artifacts_dir(chat_id)
     stl = art_dir / chat.current_stl
     settings = _resolve_filament_settings(chat, body)
+    filament_preset = _resolve_filament_preset_config(chat, body)
     chat.status = "slicing"
     save_chat(store, chat)
-    return _slice_stl(stl, art_dir, f"/chats/{chat_id}/artifacts", settings, chat_id=chat_id)
+    return _slice_stl(
+        stl, art_dir, f"/chats/{chat_id}/artifacts", settings, chat_id=chat_id, filament_preset=filament_preset
+    )
 
 
 # --------------------------------------------------------------------------- #

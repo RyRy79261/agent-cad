@@ -10,6 +10,7 @@ import {
   Chat,
   CalibrateRequest,
   DEFAULT_API_URL,
+  FilamentPreset,
   type FilamentProfile,
   ImportResult,
   InterviewResult,
@@ -80,6 +81,9 @@ export const updateFilament = (printerId: string, filamentId: string, f: Filamen
   request(`/printers/${printerId}/filaments/${filamentId}`, Printer, jsonInit("PUT", f));
 export const deleteFilament = (printerId: string, filamentId: string) =>
   request(`/printers/${printerId}/filaments/${filamentId}`, Printer, jsonInit("DELETE"));
+/** OrcaSlicer filament presets compatible with this printer, read from the local install. */
+export const listFilamentPresets = (printerId: string) =>
+  request(`/printers/${printerId}/filament-presets`, z.array(FilamentPreset));
 export const getSettingsDescriptor = (printerId: string, filamentId?: string) =>
   request(
     `/printers/${printerId}/settings-descriptor${filamentId ? `?filament=${encodeURIComponent(filamentId)}` : ""}`,

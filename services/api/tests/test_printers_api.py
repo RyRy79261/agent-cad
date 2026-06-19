@@ -42,3 +42,16 @@ def test_printer_and_filament_crud_over_http():
 
         # unknown printer -> 404
         assert c.get("/printers/nope").status_code == 404
+
+
+def test_filament_presets_endpoint_returns_a_list():
+    """Filament presets read from the local OrcaSlicer (a list; empty without a slicer/mapping)."""
+    with TestClient(app) as c:
+        r = c.get("/printers/ender5s1/filament-presets")
+        assert r.status_code == 200
+        presets = r.json()
+        assert isinstance(presets, list)
+        for p in presets:  # shape holds whenever OrcaSlicer is present
+            assert {"id", "name", "vendor"} <= p.keys()
+        # a printer with no OrcaSlicer machine mapping → empty, not an error
+        assert c.get("/printers/no-such-printer/filament-presets").json() == []

@@ -1,13 +1,20 @@
 "use client";
 
 import * as React from "react";
-import type { FilamentProfile, SliceSettings } from "@agent-cad/types";
+import type { FilamentPreset, FilamentProfile, SliceSettings } from "@agent-cad/types";
 import { Loader2 } from "lucide-react";
 
 import * as api from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Dialog,
   DialogContent,
@@ -19,6 +26,7 @@ import {
 } from "@/components/ui/dialog";
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "filament";
+const CUSTOM = "__custom__"; // sentinel for "author my own" in the preset picker
 
 /** Sensible starting slice values per material — the editor refines from here. */
 const PLA_DEFAULTS: SliceSettings = { nozzle_temp: 210, bed_temp: 60, wall_speed: 25, flow: 0.95 };
@@ -33,7 +41,7 @@ const materialDefaults = (material: string): SliceSettings =>
   MATERIAL_DEFAULTS[material.toUpperCase().replace(/[^A-Z]/g, "")] ?? PLA_DEFAULTS;
 
 function blankFilament(): FilamentProfile {
-  return { id: "", name: "", material: "PLA", brand: "", color: "", settings: {}, default_settings: {} };
+  return { id: "", name: "", material: "PLA", brand: "", color: "", base_preset: null, settings: {}, default_settings: {} };
 }
 
 export interface FilamentDialogProps {
@@ -46,16 +54,30 @@ export interface FilamentDialogProps {
 }
 
 /**
- * Create / rename a filament's **identity** only (name, material, brand, colour).
- * The full slice profile — every setting + the test prints — lives on the
- * Filament·Calibration editor; this dialog never touches `settings` on edit, so
- * a quick rename can't wipe a tuned profile.
+ * Create / rename a filament's **identity**. On create you pick from your installed
+ * OrcaSlicer's filament presets (real names — "Creality Generic PETG") and add a colour
+ * label, or author a custom one. The full slice profile + test prints live on the
+ * Filament·Calibration editor; edit here never touches `settings`, so a rename can't wipe
+ * a tuned profile.
  */
 export function FilamentDialog({ mode, printerId, filament, trigger, onSaved }: FilamentDialogProps) {
   const [open, setOpen] = React.useState(false);
   const [form, setForm] = React.useState<FilamentProfile>(filament ?? blankFilament());
+  const [presets, setPresets] = React.useState<FilamentPreset[]>([]);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  // Load the installed slicer's compatible presets when opening a create dialog.
+  React.useEffect(() => {
+    if (!open || mode !== "create") return;
+    void (async () => {
+      try {
+        setPresets(await api.listFilamentPresets(printerId));
+      } catch {
+        setPresets([]); // no slicer / no mapping → custom-only, silently
+      }
+    })();
+  }, [open, mode, printerId]);
 
   function onOpenChange(next: boolean) {
     if (busy) return;
@@ -66,8 +88,20 @@ export function FilamentDialog({ mode, printerId, filament, trigger, onSaved }: 
     setOpen(next);
   }
 
+  const isCustom = !form.base_preset;
   const valid = form.name.trim().length > 0 && form.material.trim().length > 0;
   const set = (patch: Partial<FilamentProfile>) => setForm((f) => ({ ...f, ...patch }));
+
+  function pickPreset(value: string) {
+    if (value === CUSTOM) {
+      set({ base_preset: null });
+      return;
+    }
+    const p = presets.find((x) => x.id === value);
+    if (!p) return;
+    // Adopt the preset: its name (editable, e.g. append a colour) + material + base.
+    set({ base_preset: p.id, name: p.name, material: p.material ?? form.material });
+  }
 
   async function save() {
     if (!valid) return;
@@ -75,7 +109,9 @@ export function FilamentDialog({ mode, printerId, filament, trigger, onSaved }: 
     setError(null);
     try {
       if (mode === "create") {
-        const seeded = materialDefaults(form.material);
+        // A preset drives temps/flow/cooling itself, so keep its overrides empty; a custom
+        // filament seeds sensible per-material starting values for the editor.
+        const seeded = form.base_preset ? {} : materialDefaults(form.material);
         const body: FilamentProfile = {
           ...form,
           id: form.id || slug(form.name),
@@ -103,29 +139,70 @@ export function FilamentDialog({ mode, printerId, filament, trigger, onSaved }: 
       <DialogTrigger asChild>{trigger}</DialogTrigger>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{mode === "create" ? "New filament profile" : "Edit details"}</DialogTitle>
+          <DialogTitle>{mode === "create" ? "New filament" : "Edit details"}</DialogTitle>
           <DialogDescription>
             {mode === "create"
-              ? "Name it and pick a material — you'll set the full slice profile next."
+              ? "Pick one of your slicer's filaments (or go custom), then add a colour label."
               : "Rename or recolour. Slice settings live on the calibration editor."}
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Name">
-            <Input value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="Generic PLA" autoFocus />
-          </Field>
-          <Field label="Material">
-            <Input value={form.material} onChange={(e) => set({ material: e.target.value })} placeholder="PLA" />
-          </Field>
-          <Field label="Brand">
-            <Input value={form.brand ?? ""} onChange={(e) => set({ brand: e.target.value })} placeholder="Optional" />
-          </Field>
-          <Field label="Color">
-            <Input value={form.color ?? ""} onChange={(e) => set({ color: e.target.value })} placeholder="Optional" />
-          </Field>
+        <div className="space-y-3">
+          {mode === "create" ? (
+            <Field label="Filament">
+              <Select value={form.base_preset ?? CUSTOM} onValueChange={pickPreset}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose a filament preset" />
+                </SelectTrigger>
+                <SelectContent>
+                  {presets.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      {p.name}
+                      {p.material ? ` · ${p.material}` : ""}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value={CUSTOM}>Custom filament…</SelectItem>
+                </SelectContent>
+              </Select>
+              {presets.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">
+                  No slicer presets found — you can still create a custom filament below.
+                </p>
+              ) : null}
+            </Field>
+          ) : null}
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Name">
+              <Input
+                value={form.name}
+                onChange={(e) => set({ name: e.target.value })}
+                placeholder="e.g. Creality Generic PETG · Black"
+                autoFocus={mode === "edit"}
+              />
+            </Field>
+            <Field label="Colour (label)">
+              <Input value={form.color ?? ""} onChange={(e) => set({ color: e.target.value })} placeholder="Black" />
+            </Field>
+          </div>
+
+          {isCustom ? (
+            <Field label="Material">
+              <Input
+                value={form.material}
+                onChange={(e) => set({ material: e.target.value })}
+                placeholder="PLA / PETG / ABS…"
+              />
+            </Field>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              Based on <span className="text-foreground">{form.base_preset}</span> ({form.material}) from your slicer —
+              its temps, cooling and flow are used when slicing.
+            </p>
+          )}
+
+          {error ? <p className="text-sm text-danger">{error}</p> : null}
         </div>
-        {error ? <p className="text-sm text-danger">{error}</p> : null}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)} disabled={busy}>
