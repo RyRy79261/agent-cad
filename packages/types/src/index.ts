@@ -311,6 +311,8 @@ export const ImportResult = z.object({
   bbox: z.object({ x: z.number(), y: z.number(), z: z.number() }),
   fits_build_volume: z.boolean(),
   watertight: z.boolean(),
+  /** STEP/BREP imports are editable (real B-rep); STL imports are mesh-only. */
+  editable: z.boolean().nullish(),
 });
 export type ImportResult = z.infer<typeof ImportResult>;
 

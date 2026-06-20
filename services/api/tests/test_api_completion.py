@@ -110,3 +110,34 @@ def test_api_completion_http():
         assert c.post("/calibrate", json={"target": "cube", "filament_id": "nope"}).status_code == 404
         # an invalid target is rejected by the Literal
         assert c.post("/calibrate", json={"target": "sphere"}).status_code == 422
+
+
+def test_editable_step_import_creates_an_editable_model(tmp_path):
+    """A STEP imports as an EDITABLE model: scaffolds a model.py that imports the real geometry."""
+    from build123d import Box, BuildPart, export_step
+
+    with BuildPart() as ref:
+        Box(30, 20, 8)
+    step = tmp_path / "bracket.step"
+    export_step(ref.part, str(step))
+
+    with TestClient(app) as c:
+        with step.open("rb") as fh:
+            r = c.post("/imports", files={"file": ("bracket.step", fh, "application/step")})
+        assert r.status_code == 200, r.text
+        imp = r.json()
+        assert imp["editable"] is True
+        assert (store.imports_dir / f"{imp['id']}.step").exists()
+
+        cid = c.post("/chats", json={"title": "step"}).json()["id"]
+        chat = c.post(f"/chats/{cid}/imports/{imp['id']}/attach").json()
+        assert chat["current_stl"] == "model.stl" and chat["status"] == "model-ready"
+        art = store.artifacts_dir(cid)
+        assert (art / "model.py").exists()  # an editable source — unlike an STL import
+        assert (art / "reference.step").exists()  # the real geometry is preserved alongside
+        assert "import_step" in (art / "model.py").read_text()
+        assert "editable model" in chat["messages"][-1]["content"]
+
+        # an unsupported format (Fusion .f3d) is rejected with a pointer to export STEP
+        r2 = c.post("/imports", files={"file": ("d.f3d", b"x", "application/octet-stream")})
+        assert r2.status_code == 415 and "STEP" in r2.json()["detail"]

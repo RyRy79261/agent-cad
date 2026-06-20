@@ -960,39 +960,92 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
 
 
-@app.post("/chats/{chat_id}/imports/{import_id}/attach", response_model=Chat, tags=["chats"])
-def attach_import(chat_id: str, import_id: str) -> Chat:
-    """Attach a previously-uploaded STL into a chat as its current model."""
-    chat = get_chat(store, chat_id)
-    if chat is None:
-        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
-    src = store.imports_dir / f"{import_id}.stl"
-    if not src.exists():
-        raise HTTPException(status_code=404, detail=f"unknown import: {import_id}")
-    import shutil
-
+def _stl_bbox_fit(stl_path: Path) -> tuple[dict, bool]:
+    """(bbox dict, fits_bed) for a produced model.stl."""
     import trimesh
     from cad.printer import fits
 
-    art_dir = store.artifacts_dir(chat_id)
-    art_dir.mkdir(parents=True, exist_ok=True)
-    dst = art_dir / "model.stl"
-    shutil.copyfile(src, dst)
-    mesh = trimesh.load(dst, force="mesh")
+    mesh = trimesh.load(stl_path, force="mesh")
     ext = [float(v) for v in mesh.extents]
     fit = fits({"x": ext[0], "y": ext[1], "z": ext[2]})
-    bbox = {"x": round(ext[0], 2), "y": round(ext[1], 2), "z": round(ext[2], 2)}
+    return {"x": round(ext[0], 2), "y": round(ext[1], 2), "z": round(ext[2], 2)}, fit.fits
+
+
+@app.post("/chats/{chat_id}/imports/{import_id}/attach", response_model=Chat, tags=["chats"])
+def attach_import(chat_id: str, import_id: str) -> Chat:
+    """Attach an uploaded model into a chat. An **STL** becomes a (non-editable) mesh model; a
+    **STEP/BREP** becomes an **editable** model — we scaffold a build123d wrapper that imports it,
+    so the chat can modify the real geometry instead of doing a lossy rebuild."""
+    import shutil
+
+    from cad.imports import classify, scaffold_source
+
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    src = next(store.imports_dir.glob(f"{import_id}.*"), None)
+    if src is None:
+        raise HTTPException(status_code=404, detail=f"unknown import: {import_id}")
+    art_dir = store.artifacts_dir(chat_id)
+    art_dir.mkdir(parents=True, exist_ok=True)
+    fmt = src.suffix.lower().lstrip(".")
+
+    if classify(src.name) == "editable":
+        from cad.runner import build_model
+
+        ref_name = f"reference{src.suffix.lower()}"
+        shutil.copyfile(src, art_dir / ref_name)
+        (art_dir / "model.py").write_text(scaffold_source(ref_name), encoding="utf-8")
+        result = build_model(art_dir / "model.py", {}, out_dir=art_dir, name="model", formats=("stl", "step"))
+        chat = get_chat(store, chat_id)
+        assert chat is not None
+        if not result.ok or not (art_dir / "model.stl").exists():
+            chat.status = "new"
+            save_chat(store, chat)
+            tail = (result.error or "could not read the file").strip().splitlines()[-1][:200]
+            append_message(
+                store, chat_id, "assistant",
+                f"I couldn't open that {fmt.upper()} as an editable model — {tail}",
+            )
+            out = get_chat(store, chat_id)
+            assert out is not None
+            return out
+        bbox, fits_bed = _stl_bbox_fit(art_dir / "model.stl")
+        chat.current_stl = "model.stl"
+        chat.status = "model-ready"
+        save_chat(store, chat)
+        fit_msg = "Fits the bed." if fits_bed else "⚠ Doesn't fit the bed as-is."
+        ref = ArtifactRef(
+            kind="import", name="model.stl", fmt="stl",
+            url=f"/chats/{chat_id}/artifacts/model.stl", bbox=bbox, fits_build_volume=fits_bed,
+        )
+        append_message(
+            store, chat_id, "assistant",
+            f"Imported your **.{fmt}** as an editable model — {bbox['x']:.0f}×{bbox['y']:.0f}×{bbox['z']:.0f} mm. "
+            f"{fit_msg} This is the real geometry (not a mesh), so just tell me what to add, cut, or resize "
+            "and I'll edit the original design.",
+            artifact_refs=[ref],
+        )
+        out = get_chat(store, chat_id)
+        assert out is not None
+        return out
+
+    # Mesh (STL): viewable + printable, but no editable source.
+    shutil.copyfile(src, art_dir / "model.stl")
+    bbox, fits_bed = _stl_bbox_fit(art_dir / "model.stl")
     chat.current_stl = "model.stl"
     chat.status = "model-ready"
     save_chat(store, chat)
-    fit_msg = "Fits the bed." if fit.fits else "⚠ Doesn't fit the bed as-is."
+    fit_msg = "Fits the bed." if fits_bed else "⚠ Doesn't fit the bed as-is."
     ref = ArtifactRef(
         kind="import", name="model.stl", fmt="stl",
-        url=f"/chats/{chat_id}/artifacts/model.stl", bbox=bbox, fits_build_volume=fit.fits,
+        url=f"/chats/{chat_id}/artifacts/model.stl", bbox=bbox, fits_build_volume=fits_bed,
     )
     append_message(
         store, chat_id, "assistant",
-        f"Imported model — {bbox['x']:.0f}×{bbox['y']:.0f}×{bbox['z']:.0f} mm. {fit_msg}",
+        f"Imported your **.{fmt}** — {bbox['x']:.0f}×{bbox['y']:.0f}×{bbox['z']:.0f} mm. {fit_msg} "
+        "Heads up: an STL is a mesh, so I can show and slice it but can't *edit* it. To modify a design, "
+        "import a **STEP (.step)** file instead and I can change the real geometry.",
         artifact_refs=[ref],
     )
     result = get_chat(store, chat_id)
@@ -1020,15 +1073,23 @@ def chat_slice(chat_id: str, body: ChatSliceIn | None = None) -> JobRef:
 # STL import + calibration test prints                                        #
 # --------------------------------------------------------------------------- #
 @app.post("/imports", tags=["imports"])
-async def import_stl(file: Annotated[UploadFile, File()]) -> dict:
-    """Upload + validate an STL (trimesh), store it under ~/.agent-cad/imports/<id>.stl."""
-    import trimesh
+async def import_model(file: Annotated[UploadFile, File()]) -> dict:
+    """Upload + validate a model, stored under ~/.agent-cad/imports/<id><ext>.
+
+    **STL** (a mesh — view/print only) or **STEP/BREP** (editable B-rep geometry). Unsupported
+    formats (``.f3d``, ``.iges``, …) are rejected with a pointer to export STEP."""
+    from cad.imports import cad_bbox, classify, unsupported_reason
     from cad.printer import fits
+
+    name = Path(file.filename or "import.stl").name
+    ext = Path(name).suffix.lower()
+    kind = classify(name)
+    if kind == "unsupported":
+        raise HTTPException(status_code=415, detail=unsupported_reason(name))
 
     store.imports_dir.mkdir(parents=True, exist_ok=True)
     import_id = uuid.uuid4().hex[:12]
-    name = Path(file.filename or "import.stl").name
-    dst = store.imports_dir / f"{import_id}.stl"
+    dst = store.imports_dir / f"{import_id}{ext}"
     max_bytes = 100 * 1024 * 1024  # 100 MB cap, streamed to disk (no full-payload in RAM)
     size, too_big = 0, False
     with dst.open("wb") as out:
@@ -1040,23 +1101,36 @@ async def import_stl(file: Annotated[UploadFile, File()]) -> dict:
             out.write(chunk)
     if too_big:
         dst.unlink(missing_ok=True)
-        raise HTTPException(status_code=413, detail="STL too large (max 100 MB)")
-    try:
-        mesh = trimesh.load(dst, force="mesh")
-        ext = [float(v) for v in mesh.extents]
-    except Exception as exc:  # noqa: BLE001 - reject anything trimesh can't load as a mesh
+        raise HTTPException(status_code=413, detail="file too large (max 100 MB)")
+
+    if kind == "mesh":
+        import trimesh
+
+        try:
+            mesh = trimesh.load(dst, force="mesh")
+            extents = [float(v) for v in mesh.extents]
+        except Exception as exc:  # noqa: BLE001 - reject anything trimesh can't load as a mesh
+            dst.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=f"not a loadable STL mesh: {exc}") from exc
+        watertight = bool(mesh.is_watertight)
+    else:  # editable STEP / BREP
+        try:
+            extents, _vol = cad_bbox(dst)
+        except Exception as exc:  # noqa: BLE001 - reject anything build123d can't read
+            dst.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=f"could not read this CAD file: {exc}") from exc
+        watertight = True
+    if min(extents) <= 0:
         dst.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail=f"not a loadable STL mesh: {exc}") from exc
-    if min(ext) <= 0:
-        dst.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail="degenerate mesh (zero extent)")
-    fit = fits({"x": ext[0], "y": ext[1], "z": ext[2]})
+        raise HTTPException(status_code=400, detail="degenerate geometry (zero extent)")
+    fit = fits({"x": extents[0], "y": extents[1], "z": extents[2]})
     return {
         "id": import_id,
         "name": name,
-        "bbox": {"x": round(ext[0], 2), "y": round(ext[1], 2), "z": round(ext[2], 2)},
+        "bbox": {"x": round(extents[0], 2), "y": round(extents[1], 2), "z": round(extents[2], 2)},
         "fits_build_volume": fit.fits,
-        "watertight": bool(mesh.is_watertight),
+        "watertight": watertight,
+        "editable": kind == "editable",
     }
 
 

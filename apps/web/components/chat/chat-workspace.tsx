@@ -43,6 +43,10 @@ const LONG_POLL = { timeoutMs: 600_000 };
 const REFERENCE_RE = /\.(png|jpe?g|webp|gif|stl)$/i;
 const isReferenceFile = (f: File) => REFERENCE_RE.test(f.name) || f.type.startsWith("image/");
 
+/** Editable CAD (real B-rep) — imported AS the model, not pinned as a reference. */
+const EDITABLE_CAD_RE = /\.(step|stp|brep)$/i;
+const isEditableCad = (f: File) => EDITABLE_CAD_RE.test(f.name);
+
 /** Friendly message for a poll timeout — the job keeps running server-side, so don't alarm. */
 function describeError(e: unknown): string {
   if (e instanceof api.ApiError && e.status === 408) {
@@ -435,7 +439,7 @@ export function ChatWorkspace() {
       <input
         ref={fileInputRef}
         type="file"
-        accept=".stl"
+        accept=".stl,.step,.stp,.brep"
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];
@@ -446,13 +450,16 @@ export function ChatWorkspace() {
       <input
         ref={refInputRef}
         type="file"
-        accept="image/*,.stl"
+        accept="image/*,.stl,.step,.stp,.brep"
         multiple
         className="hidden"
         onChange={(e) => {
           const files = Array.from(e.target.files ?? []);
           e.target.value = "";
-          void addReferenceFiles(files.filter(isReferenceFile));
+          // An editable CAD file becomes the model (import); the rest pin as references.
+          const cad = files.find(isEditableCad);
+          if (cad) void importFile(cad);
+          void addReferenceFiles(files.filter((f) => !isEditableCad(f) && isReferenceFile(f)));
         }}
       />
       <Sidebar
@@ -526,7 +533,11 @@ export function ChatWorkspace() {
           onDrop={(e) => {
             e.preventDefault();
             setDragActive(false);
-            void addReferenceFiles(Array.from(e.dataTransfer.files).filter(isReferenceFile));
+            const files = Array.from(e.dataTransfer.files);
+            // A dropped STEP/BREP is imported as an editable model; images/STL pin as references.
+            const cad = files.find(isEditableCad);
+            if (cad) void importFile(cad);
+            void addReferenceFiles(files.filter((f) => !isEditableCad(f) && isReferenceFile(f)));
           }}
         >
           {dragActive ? (
@@ -630,7 +641,7 @@ export function ChatWorkspace() {
                       className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
                     >
                       <Upload className="h-3.5 w-3.5" />
-                      import an STL as the model
+                      import a model (STL to print · STEP to edit)
                     </button>
                     <ReferencesTray
                       references={[]}
