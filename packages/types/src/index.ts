@@ -275,6 +275,20 @@ export const Message = z.object({
 });
 export type Message = z.infer<typeof Message>;
 
+/** A bounding box in millimetres — mirrors `BBox` (a dimensional triple, not an arbitrary map). */
+export const BBox = z.object({ x: z.number(), y: z.number(), z: z.number() });
+export type BBox = z.infer<typeof BBox>;
+
+/** A persistent visual reference pinned to a chat (image, or an STL rendered to an image). */
+export const Reference = z.object({
+  id: z.string(),
+  kind: z.enum(["image", "stl"]),
+  name: z.string(),
+  image_url: z.string(),
+  bbox: BBox.nullish(),
+});
+export type Reference = z.infer<typeof Reference>;
+
 export const Chat = z.object({
   id: z.string(),
   title: z.string(),
@@ -284,6 +298,7 @@ export const Chat = z.object({
   printer_id: z.string().nullish(),
   filament_id: z.string().nullish(),
   current_stl: z.string().nullish(),
+  references: z.array(Reference).default([]),
   messages: z.array(Message).default([]),
 });
 export type Chat = z.infer<typeof Chat>;

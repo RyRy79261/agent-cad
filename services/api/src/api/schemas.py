@@ -164,6 +164,28 @@ class ArtifactRef(BaseModel):
     slice_info: dict[str, Any] | None = None
 
 
+class BBox(BaseModel):
+    """A bounding box in millimetres (a dimensional triple, not an arbitrary map)."""
+
+    x: float
+    y: float
+    z: float
+
+
+class Reference(BaseModel):
+    """A persistent visual reference pinned to a chat — applied to every generate/refine.
+
+    ``image_url`` is what the model views (the uploaded image, or an STL's render);
+    ``kind`` distinguishes an uploaded image from an STL (which also carries ``bbox``).
+    """
+
+    id: str
+    kind: Literal["image", "stl"]
+    name: str
+    image_url: str  # /chats/<id>/references/<file> — the viewable image (or STL render)
+    bbox: BBox | None = None  # mm, for stl references
+
+
 class Message(BaseModel):
     role: str  # user | assistant | system
     content: str
@@ -184,6 +206,7 @@ class Chat(BaseModel):
     printer_id: str | None = None
     filament_id: str | None = None
     current_stl: str | None = None  # filename of the slice target in artifacts/
+    references: list[Reference] = Field(default_factory=list)  # pinned visual references
     messages: list[Message] = Field(default_factory=list)
 
 

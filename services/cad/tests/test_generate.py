@@ -145,6 +145,46 @@ def test_claude_code_decodes_utf8_and_passes_model_effort(monkeypatch: pytest.Mo
     assert "--effort" in captured["cmd"] and "medium" in captured["cmd"]
 
 
+def test_claude_code_attaches_images_with_read_scope(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An attached reference image → allow ONLY Read, scope it to the image dir, and
+    reference the path in the prompt so the model views it."""
+    from types import SimpleNamespace
+
+    import cad.generate.drivers as drivers_mod
+
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"is_error": False, "result": "x = 1"}), stderr="")
+
+    monkeypatch.setattr(drivers_mod.subprocess, "run", fake_run)
+    ClaudeCodeDriver().complete("sys", [Message("user", "build this", attachments=("/tmp/imgs/sketch.png",))])
+
+    cmd = captured["cmd"]
+    assert "--allowedTools" in cmd and "Read" in cmd
+    assert "--disallowedTools" not in cmd  # images mode allows only Read
+    assert "--add-dir" in cmd and "/tmp/imgs" in cmd
+    assert "/tmp/imgs/sketch.png" in cmd[2]  # path appended to the -p prompt
+
+
+def test_claude_code_no_attachments_denies_all_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+
+    import cad.generate.drivers as drivers_mod
+
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return SimpleNamespace(returncode=0, stdout=json.dumps({"is_error": False, "result": "x = 1"}), stderr="")
+
+    monkeypatch.setattr(drivers_mod.subprocess, "run", fake_run)
+    ClaudeCodeDriver().complete("sys", [Message("user", "build a cube")])
+    cmd = captured["cmd"]
+    assert "--disallowedTools" in cmd and "Read" in cmd and "--allowedTools" not in cmd
+
+
 def test_claude_code_retries_transient_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     """A dropped connection ('Connection closed … Try again') is transient — retry, don't fail."""
     from types import SimpleNamespace

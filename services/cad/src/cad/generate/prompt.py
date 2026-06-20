@@ -75,6 +75,13 @@ walls ≥ 1.2 mm; prefer flat-on-bed orientation; minimise steep overhangs.
   write files, do not `if __name__ == "__main__"`. Just define `build`.
 - Import what you use from `build123d` (`from build123d import *` is fine).
 
+## Reference images (when attached)
+If the request references image(s), **view them with the Read tool first.** Treat a hand
+sketch / drawing as the shape to build (honour any labelled dimensions); treat a photo or
+3D render as a guide for proportions, features, and style — or, when told it's a reference
+for one part (e.g. "use this for the back panel"), match that aspect only. Build a clean
+parametric model from what you see; do not trace pixels.
+
 Study these two known-good templates and follow their structure closely. When the
 request is close to one of them, **adapt it** rather than starting from scratch.
 

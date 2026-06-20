@@ -73,10 +73,15 @@ def test_api_completion_http():
         assert chat["messages"][-1]["artifact_refs"][0]["kind"] == "import"
         assert c.post(f"/chats/{cid}/imports/nope/attach").status_code == 404
 
-        # --- interview (no key -> job succeeds with ready) ---
-        j = c.post(f"/chats/{cid}/interview", json={"prompt": "a 90mm coaster"}).json()
+        # --- interview: no key -> degrades to ready, then generates INLINE in the same job;
+        #     with no driver the generation degrades gracefully (ok=False). The user's brief
+        #     is posted exactly once (interview no longer double-posts via a second generate). ---
+        fresh = c.post("/chats", json={"title": "coaster"}).json()["id"]
+        j = c.post(f"/chats/{fresh}/interview", json={"prompt": "a 90mm coaster"}).json()
         res = _wait_terminal(c, j["job_id"])["result"]
-        assert res["ready"] is True  # degraded gracefully
+        assert res["ok"] is False  # interview→inline-generate degraded gracefully without a key
+        fresh_chat = get_chat(store, fresh)
+        assert sum(1 for m in fresh_chat.messages if m.role == "user") == 1  # no duplicate brief
 
         # --- refine: 409 with no model.py, then a job submits (real gen needs a key) ---
         empty = c.post("/chats", json={"title": "empty"}).json()["id"]

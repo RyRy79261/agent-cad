@@ -25,6 +25,7 @@ import { Composer } from "./composer";
 import { ModelSelector } from "./model-selector";
 import { MessageBubble } from "./message-bubble";
 import { WorkingIndicator, formatElapsed } from "./working-indicator";
+import { ReferencesTray } from "./references-tray";
 import { StatusBadge } from "./status-badge";
 import { Stepper } from "./stepper";
 import { PrintSettingsPanel } from "./print-settings-panel";
@@ -37,6 +38,10 @@ const HOW_IT_WORKS = ["Describe", "Refine", "Slice & print"];
 
 /** Generate/refine can take minutes at high effort — poll long before giving up (FR-CHAT-13). */
 const LONG_POLL = { timeoutMs: 600_000 };
+
+/** Files accepted as a pinned reference (images + STL). */
+const REFERENCE_RE = /\.(png|jpe?g|webp|gif|stl)$/i;
+const isReferenceFile = (f: File) => REFERENCE_RE.test(f.name) || f.type.startsWith("image/");
 
 /** Friendly message for a poll timeout — the job keeps running server-side, so don't alarm. */
 function describeError(e: unknown): string {
@@ -78,8 +83,10 @@ export function ChatWorkspace() {
   const [workStartedAt, setWorkStartedAt] = React.useState<number | null>(null);
   const [lastDurationMs, setLastDurationMs] = React.useState<number | null>(null);
 
+  const [dragActive, setDragActive] = React.useState(false);
   const threadEndRef = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const refInputRef = React.useRef<HTMLInputElement>(null);
 
   // --- initial load -------------------------------------------------------- //
   React.useEffect(() => {
@@ -190,20 +197,22 @@ export function ChatWorkspace() {
     [refreshChats],
   );
 
-  const refine = React.useCallback(
-    async (chatId: string, instruction: string) => {
-      setGenerating(true);
-      setTab("model");
+  // A message on an existing model: the agent either talks back (a question, an opinion,
+  // ideation) or makes a surgical edit — it no longer regenerates on every message.
+  const respond = React.useCallback(
+    async (chatId: string, text: string) => {
+      setInterviewing(true);
       setError(null);
       try {
-        await api.runJob(() => api.chatRefine(chatId, instruction), LONG_POLL);
+        const job = await api.runJob(() => api.chatRespond(chatId, text), LONG_POLL);
+        if (job.result?.action !== "chat") setTab("model"); // an edit produced a new model
         setActive(await api.getChat(chatId));
         await refreshChats();
       } catch (e) {
         setError(describeError(e));
         await refreshChats();
       } finally {
-        setGenerating(false);
+        setInterviewing(false);
       }
     },
     [refreshChats],
@@ -216,19 +225,20 @@ export function ChatWorkspace() {
       setInterviewing(true);
       setError(null);
       try {
-        const job = await api.runJob(() => api.chatInterview(chatId, text));
-        const ready = Boolean(job.result?.ready);
-        const resolved = (job.result?.resolved_prompt as string | undefined) ?? text;
-        setActive(await api.getChat(chatId));
+        // One job: it asks a follow-up, OR (when ready) generates inline — so poll long.
+        await api.runJob(() => api.chatInterview(chatId, text), LONG_POLL);
+        const updated = await api.getChat(chatId);
+        setActive(updated);
+        if (updated.current_stl) setTab("model"); // ready → it generated a model
         await refreshChats();
-        if (ready) await generate(chatId, resolved);
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e));
+        setError(describeError(e));
+        await refreshChats();
       } finally {
         setInterviewing(false);
       }
     },
-    [generate, refreshChats],
+    [refreshChats],
   );
 
   const handleSubmit = React.useCallback(
@@ -246,7 +256,7 @@ export function ChatWorkspace() {
           await refreshChats();
           await interview(chat.id, text);
         } else if (active.current_stl) {
-          await refine(active.id, text); // model exists → refine
+          await respond(active.id, text); // model exists → talk back, or surgically edit
         } else {
           await interview(active.id, text); // mid-interview / pre-model → another clarify turn
         }
@@ -258,7 +268,7 @@ export function ChatWorkspace() {
         setPendingText(null);
       }
     },
-    [active, interview, refine, refreshChats],
+    [active, interview, respond, refreshChats],
   );
 
   // "Skip & generate now" — bypass further questions, generate from the brief so far.
@@ -295,6 +305,59 @@ export function ChatWorkspace() {
     },
     [active, refreshChats],
   );
+
+  // Pin an image/STL reference (from the picker, drag-drop, or clipboard paste). Creates a
+  // chat if there isn't one yet so a sketch can be the very first thing you add.
+  const addReferenceFiles = React.useCallback(
+    async (files: File[]) => {
+      if (!files.length) return;
+      setError(null);
+      try {
+        // Resolve/create the target chat ONCE — a multi-file add must not spawn several
+        // chats and split the references across them.
+        let chatId = active?.id;
+        if (!chatId) {
+          const created = await api.createChat({ title: "New chat" });
+          setActive(created);
+          chatId = created.id;
+        }
+        let updated: Chat | null = null;
+        for (const file of files) {
+          updated = await api.addReference(chatId, file);
+        }
+        if (updated) setActive(updated);
+        await refreshChats();
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [active, refreshChats],
+  );
+
+  const removeRef = React.useCallback(
+    async (refId: string) => {
+      if (!active) return;
+      try {
+        setActive(await api.removeReference(active.id, refId));
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [active],
+  );
+
+  // Paste an image anywhere → pin it as a reference.
+  React.useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const imgs = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith("image/"));
+      if (imgs.length) {
+        e.preventDefault();
+        void addReferenceFiles(imgs);
+      }
+    };
+    document.addEventListener("paste", onPaste);
+    return () => document.removeEventListener("paste", onPaste);
+  }, [addReferenceFiles]);
 
   const slice = React.useCallback(async () => {
     if (!active) return;
@@ -380,6 +443,18 @@ export function ChatWorkspace() {
           if (file) void importFile(file);
         }}
       />
+      <input
+        ref={refInputRef}
+        type="file"
+        accept="image/*,.stl"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          e.target.value = "";
+          void addReferenceFiles(files.filter(isReferenceFile));
+        }}
+      />
       <Sidebar
         chats={chats}
         activeId={active?.id ?? null}
@@ -437,7 +512,30 @@ export function ChatWorkspace() {
           </div>
         </header>
 
-        <div className="flex min-h-0 flex-1">
+        <div
+          className="relative flex min-h-0 flex-1"
+          onDragOver={(e) => {
+            if (Array.from(e.dataTransfer.types).includes("Files")) {
+              e.preventDefault();
+              setDragActive(true);
+            }
+          }}
+          onDragLeave={(e) => {
+            if (e.currentTarget === e.target) setDragActive(false);
+          }}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragActive(false);
+            void addReferenceFiles(Array.from(e.dataTransfer.files).filter(isReferenceFile));
+          }}
+        >
+          {dragActive ? (
+            <div className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-primary/10 backdrop-blur-sm">
+              <div className="rounded-2xl border-2 border-dashed border-primary bg-card px-6 py-4 text-sm font-medium text-foreground">
+                Drop an image or STL to pin it as a reference
+              </div>
+            </div>
+          ) : null}
           {/* thread + composer */}
           <main className="flex min-w-0 flex-1 flex-col">
             {active ? (
@@ -476,6 +574,12 @@ export function ChatWorkspace() {
                 </div>
                 <div className="border-t px-6 py-4">
                   <div className="mx-auto max-w-2xl space-y-3">
+                    <ReferencesTray
+                      references={active.references ?? []}
+                      onRemove={removeRef}
+                      onAdd={() => refInputRef.current?.click()}
+                      disabled={busy}
+                    />
                     {suggestions.length > 0 && !busy ? (
                       <div className="flex flex-wrap gap-2">
                         {suggestions.map((s) => (
@@ -518,15 +622,23 @@ export function ChatWorkspace() {
                     busy={busy}
                     variant="hero"
                   />
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={busy}
-                    className="mt-4 inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-                  >
-                    <Upload className="h-3.5 w-3.5" />
-                    or import an STL file
-                  </button>
+                  <div className="mt-4 flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={busy}
+                      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+                    >
+                      <Upload className="h-3.5 w-3.5" />
+                      import an STL as the model
+                    </button>
+                    <ReferencesTray
+                      references={[]}
+                      onRemove={removeRef}
+                      onAdd={() => refInputRef.current?.click()}
+                      disabled={busy}
+                    />
+                  </div>
                   <div className="mt-8 flex items-center justify-center gap-2 text-[11px] font-medium uppercase tracking-wide text-subtle-foreground">
                     {HOW_IT_WORKS.map((step, i) => (
                       <React.Fragment key={step}>

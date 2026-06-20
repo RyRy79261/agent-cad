@@ -20,6 +20,8 @@ class Message:
 
     role: str  # "user" | "assistant"
     content: str
+    #: Absolute paths to reference images/files the model should view (sketches, STL renders).
+    attachments: tuple[str, ...] = ()
 
 
 @runtime_checkable

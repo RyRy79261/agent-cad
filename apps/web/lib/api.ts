@@ -98,12 +98,24 @@ export const chatGenerate = (id: string, prompt: string) =>
   request(`/chats/${id}/generate`, JobRef, jsonInit("POST", { prompt }));
 export const chatRefine = (id: string, instruction: string) =>
   request(`/chats/${id}/refine`, JobRef, jsonInit("POST", { instruction }));
+/** A message on an existing model: the agent talks back, or surgically edits when you want a change. */
+export const chatRespond = (id: string, instruction: string) =>
+  request(`/chats/${id}/respond`, JobRef, jsonInit("POST", { instruction }));
 export const chatInterview = (id: string, prompt: string) =>
   request(`/chats/${id}/interview`, JobRef, jsonInit("POST", { prompt }));
 export const chatSlice = (id: string, body: { filament_id?: string; settings?: SliceSettings } = {}) =>
   request(`/chats/${id}/slice`, JobRef, jsonInit("POST", body));
 export const attachImport = (chatId: string, importId: string) =>
   request(`/chats/${chatId}/imports/${importId}/attach`, Chat, jsonInit("POST"));
+
+// --- persistent references (images / STL renders the model views every turn) ---- //
+export async function addReference(chatId: string, file: File): Promise<z.infer<typeof Chat>> {
+  const form = new FormData();
+  form.append("file", file);
+  return request(`/chats/${chatId}/references`, Chat, { method: "POST", body: form });
+}
+export const removeReference = (chatId: string, refId: string) =>
+  request(`/chats/${chatId}/references/${refId}`, Chat, jsonInit("DELETE"));
 
 // --- imports + calibration ------------------------------------------------- //
 export async function importStl(file: File): Promise<ImportResult> {
