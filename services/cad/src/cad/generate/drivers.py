@@ -19,6 +19,7 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 from cad.generate.base import Driver, Message
@@ -77,7 +78,9 @@ class ClaudeCodeDriver:
             )
         return True, ""
 
-    def complete(self, system: str, messages: list[Message]) -> str:
+    def complete(
+        self, system: str, messages: list[Message], on_progress: Callable[[str], None] | None = None
+    ) -> str:
         # The CLI is single-prompt; fold the running conversation into one turn so
         # retries carry the prior model.py + the error feedback.
         prompt = _flatten_conversation(messages)
@@ -152,7 +155,9 @@ class AnthropicDriver:
             return False, "set ANTHROPIC_API_KEY to use the metered Anthropic API driver."
         return True, ""
 
-    def complete(self, system: str, messages: list[Message]) -> str:
+    def complete(
+        self, system: str, messages: list[Message], on_progress: Callable[[str], None] | None = None
+    ) -> str:
         import anthropic
 
         client = anthropic.Anthropic()
@@ -192,7 +197,9 @@ class OllamaDriver:
         except (urllib.error.URLError, OSError) as exc:
             return False, f"no Ollama server reachable at {self.host} ({exc}). Run `ollama serve`."
 
-    def complete(self, system: str, messages: list[Message]) -> str:
+    def complete(
+        self, system: str, messages: list[Message], on_progress: Callable[[str], None] | None = None
+    ) -> str:
         body = json.dumps({
             "model": self.model,
             "system": system,

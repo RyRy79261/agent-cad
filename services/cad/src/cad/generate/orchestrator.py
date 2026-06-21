@@ -10,7 +10,9 @@ the second correction pass — and the cap is surfaced to the caller, never sile
 
 from __future__ import annotations
 
+import contextlib
 import json
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,13 @@ from cad.generate.base import Driver, Message, extract_summary, strip_code_fence
 from cad.generate.drivers import resolve_driver
 from cad.generate.prompt import build_retry_prompt, build_system_prompt, build_user_prompt
 from cad.runner import DEFAULT_FORMATS, BuildResult, build_model
+
+
+def _emit(on_progress: Callable[[str], None] | None, msg: str) -> None:
+    """Report a coarse progress phase, swallowing any reporter error (progress is non-critical)."""
+    if on_progress is not None:
+        with contextlib.suppress(Exception):  # a progress hiccup must never fail a generation
+            on_progress(msg)
 
 
 @dataclass
@@ -81,6 +90,7 @@ def generate_part(
     formats: tuple[str, ...] = DEFAULT_FORMATS,
     name: str | None = None,
     out_dir: str | Path | None = None,
+    on_progress: Callable[[str], None] | None = None,
 ) -> GenerateResult:
     """Generate a ``model.py`` for ``description`` into ``dest`` and build it.
 
@@ -132,8 +142,13 @@ def generate_part(
     total_usage = {"input_tokens": 0, "cache_creation_tokens": 0, "cache_read_tokens": 0, "output_tokens": 0}
     for round_no in range(max_rounds + 1):
         result.rounds = round_no + 1
+        designing = "Designing your model" if round_no == 0 else f"Fixing it up (attempt {round_no + 1})"
+        _emit(on_progress, designing)
         try:
-            reply = drv.complete(system, conversation)
+            # Pass a phase-prefixed sub-reporter so a streaming driver can show live activity
+            # ("…thinking", "…writing the model") under the current phase.
+            sub = (lambda a, _p=designing: _emit(on_progress, f"{_p} — {a}")) if on_progress else None
+            reply = drv.complete(system, conversation, on_progress=sub)
         except Exception as exc:  # noqa: BLE001 - surface backend failures to the caller
             result.error = f"LLM backend error ({drv.name}): {exc}"
             result.attempts.append(Attempt(round_no + 1, False, None, str(exc)[:200]))
@@ -151,6 +166,7 @@ def generate_part(
         result.summary = extract_summary(source)  # the model's chat reply (if it wrote one)
         conversation.append(Message("assistant", source))
 
+        _emit(on_progress, "Building the geometry" + (" & checking it's printable" if verify else ""))
         last_build = build_model(model_path, params={}, out_dir=artifacts_dir,
                                  name=name, formats=formats, verify=verify)
         printable = _is_printable(last_build, verify)

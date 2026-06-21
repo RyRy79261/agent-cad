@@ -168,8 +168,18 @@ class JobStore:
             self._persist_locked()
         result: dict[str, Any] | None
         crashed = False
+        # Hand work functions a progress reporter bound to THIS job, so long jobs can
+        # surface a live phase label (e.g. "Designing your model…"). A function that takes
+        # no arguments runs unchanged — progress is strictly opt-in.
+        import functools
+        import inspect
+
+        report = functools.partial(self.set_phase, job.id)
+        wants_report = False
+        with contextlib.suppress(ValueError, TypeError):
+            wants_report = bool(inspect.signature(fn).parameters) and not args and not kwargs
         try:
-            result = fn(*args, **kwargs)
+            result = fn(report) if wants_report else fn(*args, **kwargs)
             # A service that returns {"ok": False} is a failed job.
             failed = isinstance(result, dict) and result.get("ok") is False
             status = JobStatus.FAILED if failed else JobStatus.SUCCEEDED

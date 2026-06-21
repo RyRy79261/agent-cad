@@ -10,6 +10,7 @@ subscription, a metered Anthropic API key, or a fully-local Ollama server.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -35,7 +36,9 @@ class Driver(Protocol):
         """``(usable, reason)``. ``reason`` is human-readable when not usable."""
         ...
 
-    def complete(self, system: str, messages: list[Message]) -> str:
+    def complete(
+        self, system: str, messages: list[Message], on_progress: Callable[[str], None] | None = None
+    ) -> str:
         """Return the assistant's raw text reply (may still contain code fences)."""
         ...
 

@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import re
 import uuid
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
@@ -748,8 +749,11 @@ def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
     # claude-code driver (the user's Claude subscription, no metered API key); model + effort
     # come from settings and are passed EXPLICITLY so generation doesn't inherit a stray
     # CLAUDE_EFFORT from the launching shell.
-    def work() -> dict:
-        return _generate_build(chat_id, art_dir, prompt, model=sel_model, effort=sel_effort, attachments=ref_paths)
+    def work(report: Callable[[str], None]) -> dict:
+        return _generate_build(
+            chat_id, art_dir, prompt, model=sel_model, effort=sel_effort,
+            attachments=ref_paths, on_progress=report,
+        )
 
     job = jobs.submit("cad.generate", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
@@ -771,13 +775,14 @@ def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
     sel_model, sel_effort = _settings.active_model, _settings.effort
     ref_paths, ref_note = reference_attachments(store, chat)  # references attached pre-generation
 
-    def work() -> dict:
+    def work(report: Callable[[str], None]) -> dict:
         import time
 
         from api.interview import interview_turn
 
         # claude-code (subscription); model + effort from settings, passed explicitly.
         # Reference renders are passed so the interview can SEE an STL and engage about it.
+        report("Thinking about your request")
         t0 = time.monotonic()
         result = interview_turn(brief, attachments=ref_paths, ref_note=ref_note, model=sel_model, effort=sel_effort)
         dur_ms = (time.monotonic() - t0) * 1000
@@ -801,14 +806,15 @@ def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
             c.status = "generating"
             save_chat(store, c)
         return _generate_build(chat_id, art_dir, brief + ref_note, model=sel_model, effort=sel_effort,
-                               attachments=ref_paths)
+                               attachments=ref_paths, on_progress=report)
 
     job = jobs.submit("chat.interview", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
 
 
 def _generate_build(
-    chat_id: str, art_dir: Path, prompt: str, *, model: str | None, effort: str | None, attachments: list[str]
+    chat_id: str, art_dir: Path, prompt: str, *, model: str | None, effort: str | None,
+    attachments: list[str], on_progress: Callable[[str], None] | None = None,
 ) -> dict:
     """Generate a fresh model into the chat and post the result. The user's message must already
     be on the thread — this does NOT append it (avoids the interview→generate double-post)."""
@@ -819,7 +825,7 @@ def _generate_build(
     t0 = time.monotonic()
     result = generate_part(
         prompt, art_dir, model=model, effort=effort, attachments=attachments, max_rounds=2,
-        verify=True, name="model", out_dir=str(art_dir),
+        verify=True, name="model", out_dir=str(art_dir), on_progress=on_progress,
     )
     return _attach_build_to_chat(chat_id, result, duration_ms=(time.monotonic() - t0) * 1000)
 
@@ -843,6 +849,7 @@ def _refine_build(
     effort: str | None,
     attachments: list[str],
     ref_note: str,
+    on_progress: Callable[[str], None] | None = None,
 ) -> dict:
     """Surgically edit the chat's current model.py and post the result. Snapshots the prior
     version (artifacts/history/model.v<N>.py) so nothing is lost."""
@@ -881,7 +888,7 @@ def _refine_build(
     )
     result = generate_part(
         augmented, art_dir, model=model, effort=effort, attachments=attachments, max_rounds=2,
-        verify=True, name="model", out_dir=str(art_dir),
+        verify=True, name="model", out_dir=str(art_dir), on_progress=on_progress,
     )
     return _attach_build_to_chat(chat_id, result, duration_ms=(time.monotonic() - t0) * 1000)
 
@@ -903,11 +910,12 @@ def chat_respond(chat_id: str, body: ChatRefineIn) -> JobRef:
     sel_model, sel_effort = _settings.active_model, _settings.effort
     ref_paths, ref_note = reference_attachments(store, chat)
 
-    def work() -> dict:
+    def work(report: Callable[[str], None]) -> dict:
         import time
 
         from api.interview import respond_turn
 
+        report("Reading your message")
         t0 = time.monotonic()
         decision = respond_turn(message, summary, model=sel_model, effort=sel_effort)
         if decision.get("action") == "edit":
@@ -919,6 +927,7 @@ def chat_respond(chat_id: str, body: ChatRefineIn) -> JobRef:
             return _refine_build(
                 chat_id, art_dir, decision.get("instruction") or message,
                 model=sel_model, effort=sel_effort, attachments=ref_paths, ref_note=ref_note,
+                on_progress=report,
             )
         # Conversational turn — reply in words, no regeneration.
         append_message(
@@ -950,10 +959,10 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
     sel_model, sel_effort = _settings.active_model, _settings.effort
     ref_paths, ref_note = reference_attachments(store, chat)  # pinned image/STL references
 
-    def work() -> dict:
+    def work(report: Callable[[str], None]) -> dict:
         return _refine_build(
             chat_id, art_dir, instruction, model=sel_model, effort=sel_effort,
-            attachments=ref_paths, ref_note=ref_note,
+            attachments=ref_paths, ref_note=ref_note, on_progress=report,
         )
 
     job = jobs.submit("cad.refine", work, chat_id=chat_id)

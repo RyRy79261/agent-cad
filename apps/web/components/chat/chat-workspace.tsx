@@ -86,6 +86,8 @@ export function ChatWorkspace() {
   const [pendingText, setPendingText] = React.useState<string | null>(null);
   const [workStartedAt, setWorkStartedAt] = React.useState<number | null>(null);
   const [lastDurationMs, setLastDurationMs] = React.useState<number | null>(null);
+  // Live progress phase reported by the running job (e.g. "Designing your model — writing…").
+  const [livePhase, setLivePhase] = React.useState<string | null>(null);
 
   const [dragActive, setDragActive] = React.useState(false);
   const threadEndRef = React.useRef<HTMLDivElement>(null);
@@ -188,7 +190,7 @@ export function ChatWorkspace() {
       setTab("model");
       setError(null);
       try {
-        await api.runJob(() => api.chatGenerate(chatId, prompt), LONG_POLL);
+        await api.runJob(() => api.chatGenerate(chatId, prompt), { ...LONG_POLL, onPoll: (j) => setLivePhase(j.phase ?? null) });
         setActive(await api.getChat(chatId));
         await refreshChats();
       } catch (e) {
@@ -208,7 +210,7 @@ export function ChatWorkspace() {
       setInterviewing(true);
       setError(null);
       try {
-        const job = await api.runJob(() => api.chatRespond(chatId, text), LONG_POLL);
+        const job = await api.runJob(() => api.chatRespond(chatId, text), { ...LONG_POLL, onPoll: (j) => setLivePhase(j.phase ?? null) });
         if (job.result?.action !== "chat") setTab("model"); // an edit produced a new model
         setActive(await api.getChat(chatId));
         await refreshChats();
@@ -230,7 +232,7 @@ export function ChatWorkspace() {
       setError(null);
       try {
         // One job: it asks a follow-up, OR (when ready) generates inline — so poll long.
-        await api.runJob(() => api.chatInterview(chatId, text), LONG_POLL);
+        await api.runJob(() => api.chatInterview(chatId, text), { ...LONG_POLL, onPoll: (j) => setLivePhase(j.phase ?? null) });
         const updated = await api.getChat(chatId);
         setActive(updated);
         if (updated.current_stl) setTab("model"); // ready → it generated a model
@@ -270,6 +272,7 @@ export function ChatWorkspace() {
         setLastDurationMs(Date.now() - startedAt); // "took Xm Ys"
         setWorkStartedAt(null);
         setPendingText(null);
+        setLivePhase(null);
       }
     },
     [active, interview, respond, refreshChats],
@@ -562,7 +565,7 @@ export function ChatWorkspace() {
                     ) : null}
                     {busy && workStartedAt ? (
                       <WorkingIndicator
-                        label={generating ? "Generating your model" : "Thinking about your request"}
+                        label={livePhase ?? (generating ? "Generating your model" : "Thinking about your request")}
                         startedAt={workStartedAt}
                       />
                     ) : null}

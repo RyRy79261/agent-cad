@@ -43,8 +43,10 @@ class FakeDriver:
     def available(self) -> tuple[bool, str]:
         return self._usable, self._reason
 
-    def complete(self, system: str, messages: list[Message]) -> str:
+    def complete(self, system: str, messages: list[Message], on_progress=None) -> str:
         self.calls.append(list(messages))
+        if on_progress is not None:
+            on_progress("thinking")  # exercise the progress hook
         return self._replies.pop(0)
 
 
