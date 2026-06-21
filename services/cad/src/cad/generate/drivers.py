@@ -12,6 +12,7 @@ Three interchangeable drivers, selected by name (``$AGENT_CAD_LLM_DRIVER`` or th
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -85,7 +86,8 @@ class ClaudeCodeDriver:
         # retries carry the prior model.py + the error feedback.
         prompt = _flatten_conversation(messages)
         images = [a for m in messages for a in (m.attachments or ())]
-        cmd = [self.bin, "-p", prompt, "--system-prompt", system, "--output-format", "json"]
+        # Shared command (the --output-format flag is added per run-mode below).
+        cmd = [self.bin, "-p", prompt, "--system-prompt", system]
         if images:
             # Reference image(s) attached (a sketch, an STL render). Point the model at
             # them and allow ONLY the Read tool — scoped to their dirs — so it can view
@@ -108,32 +110,87 @@ class ClaudeCodeDriver:
         retries = int(os.environ.get("AGENT_CAD_CLAUDE_RETRIES", "3"))
         last = "no output"
         for attempt in range(retries):
-            # Force UTF-8 (don't trust the process locale): the CLI emits JSON whose
-            # `result` echoes model.py, routinely containing non-ASCII (em-dashes, →, °).
-            # `text=True` alone would decode with the locale encoding — ASCII on a bare
-            # locale — and crash with UnicodeDecodeError. `errors="replace"` is a backstop.
-            proc = subprocess.run(  # noqa: S603 - args are controlled, not shell-interpolated
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self.timeout,
-            )
-            # The CLI emits a JSON envelope even on error (--output-format json).
-            try:
-                payload = json.loads(proc.stdout) if proc.stdout.strip() else {}
-            except json.JSONDecodeError:
-                payload = {}
-            if proc.returncode == 0 and payload and not payload.get("is_error"):
+            rc, payload = -1, None
+            if on_progress is not None:
+                # Stream the run so the UI can show live "thinking…/writing…" activity.
+                rc, payload = self._run_streaming(cmd, on_progress)
+            if payload is None:  # no progress wanted, or a stream hiccup → proven blocking path
+                rc, payload = self._run_blocking(cmd)
+            if rc == 0 and payload and not payload.get("is_error"):
                 self.last_usage = _usage_from(payload)
                 return payload["result"]
-            last = str(payload.get("result") or proc.stderr or proc.stdout or "").strip()[:500]
+            last = str((payload or {}).get("result") or "").strip()[:500] or "claude CLI error"
             if attempt < retries - 1 and _is_retryable(last):
                 time.sleep(3 * (attempt + 1))  # brief backoff; transient drops clear fast
                 continue
             break
         raise RuntimeError(f"claude CLI error: {last}")
+
+    def _run_blocking(self, cmd: list[str]) -> tuple[int, dict]:
+        """The proven single-shot path: ``--output-format json`` → (returncode, parsed payload)."""
+        # Force UTF-8 (don't trust the process locale): the CLI's JSON `result` echoes model.py,
+        # routinely containing non-ASCII (em-dashes, →, °); `errors="replace"` is a backstop.
+        proc = subprocess.run(  # noqa: S603 - args are controlled, not shell-interpolated
+            [*cmd, "--output-format", "json"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=self.timeout,
+        )
+        try:
+            payload = json.loads(proc.stdout) if proc.stdout.strip() else {}
+        except json.JSONDecodeError:
+            payload = {}
+        return proc.returncode, payload
+
+    def _run_streaming(self, cmd: list[str], on_progress: Callable[[str], None]) -> tuple[int, dict | None]:
+        """Stream the run (``--output-format stream-json``), reporting live thinking/writing
+        activity, and return ``(returncode, result_payload)``. On ANY stream hiccup returns
+        ``(rc, None)`` so the caller falls back to the proven blocking path — streaming must
+        never be able to break a generation."""
+        full = [*cmd, "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
+        try:
+            proc = subprocess.Popen(  # noqa: S603 - args are controlled, not shell-interpolated
+                full, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, encoding="utf-8", errors="replace",
+            )
+        except OSError:
+            return 1, None
+        result_payload: dict | None = None
+        block_type, chars, last_report = "text", 0, 0.0
+        deadline = time.monotonic() + self.timeout
+        try:
+            for line in proc.stdout or ():
+                if time.monotonic() > deadline:
+                    proc.kill()
+                    return 1, None
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                t = e.get("type")
+                if t == "result":
+                    result_payload = e
+                elif t == "stream_event":
+                    ev = e.get("event") or {}
+                    et = ev.get("type")
+                    if et == "content_block_start":
+                        block_type = (ev.get("content_block") or {}).get("type") or "text"
+                    elif et == "content_block_delta":
+                        d = ev.get("delta") or {}
+                        chars += len(d.get("text") or d.get("thinking") or "")
+                        now = time.monotonic()
+                        if now - last_report > 0.7:  # throttle UI churn
+                            last_report = now
+                            verb = "thinking" if block_type == "thinking" else "writing the model"
+                            with contextlib.suppress(Exception):
+                                on_progress(f"{verb}... ({chars:,} chars)")
+            proc.wait(timeout=15)
+        except Exception:  # noqa: BLE001 - any stream/parse error → fall back to blocking
+            with contextlib.suppress(Exception):
+                proc.kill()
+            return 1, None
+        return proc.returncode, result_payload  # None payload → caller falls back to blocking
 
 
 class AnthropicDriver:
