@@ -69,6 +69,11 @@ class ClaudeCodeDriver:
         self.effort = effort
         self.bin = os.environ.get("AGENT_CAD_CLAUDE_BIN", "claude")
         self.timeout = int(os.environ.get("AGENT_CAD_CLAUDE_TIMEOUT", "600"))
+        # Advisor strategy (beta): pair a fast executor (e.g. sonnet via `model`) with an
+        # on-demand advisor (e.g. "opus") for ~Opus quality at ~Sonnet speed/cost. Off by
+        # default; set AGENT_CAD_CLAUDE_ADVISOR=opus to enable. Headless `-p` honours the
+        # `advisorModel` setting (verified). See docs / model selector (UI toggle TBD).
+        self.advisor = os.environ.get("AGENT_CAD_CLAUDE_ADVISOR") or None
         self.last_usage: dict[str, int] | None = None  # token usage of the most recent call
 
     def available(self) -> tuple[bool, str]:
@@ -105,6 +110,9 @@ class ClaudeCodeDriver:
             cmd += ["--model", self.model]
         if self.effort:
             cmd += ["--effort", self.effort]
+        if self.advisor:
+            # Sonnet/Haiku executor + an on-demand Opus advisor (beta) — best-of-both.
+            cmd += ["--settings", json.dumps({"advisorModel": self.advisor})]
         # Retry transient API failures (the CLI surfaces "Connection closed … Try again",
         # overloaded/429/529, timeouts on long high-effort runs) — they're flaky, not fatal.
         retries = int(os.environ.get("AGENT_CAD_CLAUDE_RETRIES", "3"))
