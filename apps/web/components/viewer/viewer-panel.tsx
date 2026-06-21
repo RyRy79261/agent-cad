@@ -161,7 +161,10 @@ export function ViewerPanel({
         >
           {showModel ? (
             stlUrl ? (
-              <StlViewer key={`stl:${stlUrl}:${fitKey}`} url={stlUrl} />
+              // Key on fitKey only (NOT the URL): a refine/chat update changes the URL but must
+              // keep the camera — the viewer reloads the mesh in place. "Reset view" bumps fitKey
+              // to remount + re-frame.
+              <StlViewer key={`stl:${fitKey}`} url={stlUrl} />
             ) : (
               <Placeholder
                 icon={Box}
