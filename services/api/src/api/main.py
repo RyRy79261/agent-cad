@@ -782,23 +782,32 @@ def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
 
         # claude-code (subscription); model + effort from settings, passed explicitly.
         # Reference renders are passed so the interview can SEE an STL and engage about it.
-        report("Thinking about your request")
+        report("Reading your description")
         t0 = time.monotonic()
-        result = interview_turn(brief, attachments=ref_paths, ref_note=ref_note, model=sel_model, effort=sel_effort)
+        result = interview_turn(
+            brief, first_turn=(rounds == 0), attachments=ref_paths, ref_note=ref_note,
+            model=sel_model, effort=sel_effort,
+        )
         dur_ms = (time.monotonic() - t0) * 1000
-        ready = result.get("status") != "question" or rounds >= 6  # cap at 6 questions
-        if not ready:
+        interp = result.get("interpretation")
+        has_q = result.get("status") == "question"
+        # The first turn ALWAYS pauses so the user can review the agent's interpretation of the
+        # shape before it asks/builds; later turns pause only for a real question (capped at 6).
+        pause = (has_q or (rounds == 0 and bool(interp))) and rounds < 6
+        if pause:
+            question = result.get("question") or "Shall I build it as described, or change anything?"
+            suggestions = result.get("suggestions") or ([] if has_q else ["Build it as described"])
+            body = f"{interp}\n\n{question}" if interp else question
             append_message(
-                store, chat_id, "assistant", result["question"],
-                quick_replies=result.get("suggestions") or [],
+                store, chat_id, "assistant", body,
+                quick_replies=suggestions,
                 usage=result.get("usage"), duration_ms=dur_ms,
             )
             c2 = get_chat(store, chat_id)
             if c2 is not None:
                 c2.status = "interviewing"
                 save_chat(store, c2)
-            return {"ok": True, "ready": False, "question": result.get("question"),
-                    "suggestions": result.get("suggestions")}
+            return {"ok": True, "ready": False, "question": question, "suggestions": suggestions}
         # Ready → generate INLINE in this same job. The user's brief is already on the thread
         # (appended above), so we don't re-post it — this is what fixed the duplicate message.
         c = get_chat(store, chat_id)
