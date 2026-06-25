@@ -154,16 +154,19 @@ export type PartSummary = z.infer<typeof PartSummary>;
  * sides so the server rejects garbage.
  */
 /**
- * A per-height temp/fan change applied after slicing — mirrors `CoolingCheckpoint`. From
- * `from_pct`% of the model's height up, the nozzle temp drops / fan ramps (the lower layers
- * keep the profile's settings). For heat-soak stringing on tall prints.
+ * Per-height setting changes applied after slicing — mirrors `Checkpoint`. From `from_pct`% of
+ * the model's height up, apply these (everything that can change mid-print via one g-code
+ * command). Stack several. Retraction/walls/infill can't change mid-print (need a re-slice).
  */
-export const CoolingCheckpoint = z.object({
+export const Checkpoint = z.object({
   from_pct: z.number().min(0).max(100),
   nozzle_temp: z.number().int().min(150).max(300).nullish(),
+  bed_temp: z.number().int().min(0).max(120).nullish(),
   fan_percent: z.number().int().min(0).max(100).nullish(),
+  flow_percent: z.number().int().min(50).max(150).nullish(),
+  speed_percent: z.number().int().min(20).max(300).nullish(),
 });
-export type CoolingCheckpoint = z.infer<typeof CoolingCheckpoint>;
+export type Checkpoint = z.infer<typeof Checkpoint>;
 
 export const SliceSettings = z.object({
   infill_density: z.number().int().min(0).max(100).nullish(),
@@ -182,7 +185,7 @@ export const SliceSettings = z.object({
   support: z.boolean().nullish(),
   support_threshold: z.number().int().min(0).max(90).nullish(),
   retraction_length: z.number().min(0).max(6).nullish(),
-  checkpoint: CoolingCheckpoint.nullish(),
+  checkpoints: z.array(Checkpoint).nullish(),
   raw: z.record(z.string(), z.string()).nullish(),
 });
 export type SliceSettings = z.infer<typeof SliceSettings>;

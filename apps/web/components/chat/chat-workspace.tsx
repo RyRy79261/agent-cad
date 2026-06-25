@@ -1,12 +1,11 @@
 "use client";
 
 import * as React from "react";
-import type { BuildVolume, Chat, Printer, SettingsDescriptor, Settings } from "@agent-cad/types";
+import type { BuildVolume, Chat, Checkpoint, Printer, SettingsDescriptor, Settings } from "@agent-cad/types";
 import { AlertCircle, Upload, Hammer, SquarePen, PanelRight, MoreHorizontal, Box, ArrowRight, Trash2 } from "lucide-react";
 
 import * as api from "@/lib/api";
 import {
-  buildCheckpoint,
   buildSliceSettings,
   currentStlUrl,
   isDirty,
@@ -30,6 +29,7 @@ import { ReferencesTray } from "./references-tray";
 import { StatusBadge } from "./status-badge";
 import { Stepper } from "./stepper";
 import { PrintSettingsPanel } from "./print-settings-panel";
+import { CheckpointEditor } from "./checkpoint-editor";
 import { ViewerPanel, type ViewerTab } from "@/components/viewer/viewer-panel";
 import type { SettingsValues } from "@/components/settings/settings-form";
 
@@ -75,6 +75,7 @@ export function ChatWorkspace() {
   const [printerId, setPrinterId] = React.useState<string | null>(null);
   const [filamentId, setFilamentId] = React.useState<string | null>(null);
   const [sliceValues, setSliceValues] = React.useState<SettingsValues>({});
+  const [checkpoints, setCheckpoints] = React.useState<Checkpoint[]>([]);
 
   const [input, setInput] = React.useState("");
   const [tab, setTab] = React.useState<ViewerTab>("model");
@@ -115,7 +116,10 @@ export function ChatWorkspace() {
         const def = ps.find((p) => p.default) ?? ps[0] ?? null;
         if (def) {
           setPrinterId(def.id);
-          setFilamentId(def.filaments[0]?.id ?? null);
+          // Restore the last filament used (persisted), not always the first one.
+          const saved = localStorage.getItem("agentcad:filamentId");
+          const valid = saved && def.filaments.some((f) => f.id === saved);
+          setFilamentId(valid ? saved : (def.filaments[0]?.id ?? null));
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -149,6 +153,10 @@ export function ChatWorkspace() {
   React.useEffect(() => {
     localStorage.setItem("agentcad:railWidth", String(Math.round(railWidth)));
   }, [railWidth]);
+  // Remember the last-used filament so a new session/chat defaults to it (not Generic PLA).
+  React.useEffect(() => {
+    if (filamentId) localStorage.setItem("agentcad:filamentId", filamentId);
+  }, [filamentId]);
 
   const refreshChats = React.useCallback(async () => {
     try {
@@ -186,6 +194,7 @@ export function ChatWorkspace() {
     async (id: string) => {
       setError(null);
       setSliceValues({});
+      setCheckpoints([]);
       setTab("model");
       try {
         const chat = await api.getChat(id);
@@ -205,6 +214,7 @@ export function ChatWorkspace() {
     setActive(null);
     setInput("");
     setSliceValues({});
+    setCheckpoints([]);
     setTab("model");
     setError(null);
   }, []);
@@ -415,11 +425,18 @@ export function ChatWorkspace() {
     setSlicing(true);
     setError(null);
     try {
-      // Send `settings` when the user changed a descriptor field OR set a cooling checkpoint
-      // (the checkpoint isn't a descriptor field, so isDirty alone misses it).
-      const overridden = descriptor && (isDirty(descriptor, sliceValues) || buildCheckpoint(sliceValues));
+      // Send `settings` when the user changed a descriptor field OR set any checkpoints
+      // (checkpoints aren't descriptor fields, so isDirty alone misses them).
+      const dirty = descriptor && isDirty(descriptor, sliceValues);
+      const overridden = dirty || checkpoints.length > 0;
       const body = overridden
-        ? { filament_id: filamentId ?? undefined, settings: buildSliceSettings(descriptor, sliceValues) }
+        ? {
+            filament_id: filamentId ?? undefined,
+            settings: {
+              ...(descriptor ? buildSliceSettings(descriptor, sliceValues) : {}),
+              ...(checkpoints.length ? { checkpoints } : {}),
+            },
+          }
         : { filament_id: filamentId ?? undefined };
       await api.runJob(() => api.chatSlice(active.id, body));
       setActive(await api.getChat(active.id));
@@ -430,7 +447,7 @@ export function ChatWorkspace() {
     } finally {
       setSlicing(false);
     }
-  }, [active, descriptor, sliceValues, filamentId, refreshChats]);
+  }, [active, descriptor, sliceValues, checkpoints, filamentId, refreshChats]);
 
   // --- derived ------------------------------------------------------------- //
   const stlUrl = currentStlUrl(active);
@@ -737,6 +754,14 @@ export function ChatWorkspace() {
               printerName={activePrinter?.name}
               generating={generating}
               slicing={slicing}
+              checkpointCount={checkpoints.length}
+              checkpointsSlot={
+                <CheckpointEditor
+                  checkpoints={checkpoints}
+                  onChange={setCheckpoints}
+                  disabled={!stlUrl}
+                />
+              }
             />
             <PrintSettingsPanel
               printers={printers}
@@ -747,10 +772,12 @@ export function ChatWorkspace() {
                 const p = printers.find((x) => x.id === id);
                 setFilamentId(p?.filaments[0]?.id ?? null);
                 setSliceValues({});
+                setCheckpoints([]);
               }}
               onFilamentChange={(id) => {
                 setFilamentId(id);
                 setSliceValues({});
+                setCheckpoints([]);
               }}
               descriptor={descriptor}
               values={sliceValues}

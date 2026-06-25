@@ -20,17 +20,19 @@ class BuildRequest(BaseModel):
     verify: bool = Field(default=False, description="Run printability checks on the result.")
 
 
-class CoolingCheckpoint(BaseModel):
-    """From ``from_pct``% of the print's height upward, change the nozzle temp and/or fan.
-
-    For heat-soak on tall prints: the lower layers keep the profile's settings (they print
-    fine), and above the checkpoint the temp drops / fan ramps to kill the stringing the heat
-    build-up causes near the top. Applied as a one-time g-code injection after slicing.
+class Checkpoint(BaseModel):
+    """From ``from_pct``% of the print's height upward, apply these settings — anything that can
+    change mid-print via a single g-code command, injected after slicing. Stack several to say
+    "from here do X, from there do Y". (Retraction / walls / infill are baked into the toolpaths
+    and can't change mid-print — they need a re-slice.)
     """
 
     from_pct: float = Field(..., ge=0, le=100, description="Apply above this % of the model's height.")
-    nozzle_temp: int | None = Field(default=None, ge=150, le=300)
-    fan_percent: int | None = Field(default=None, ge=0, le=100)
+    nozzle_temp: int | None = Field(default=None, ge=150, le=300)  # M104
+    bed_temp: int | None = Field(default=None, ge=0, le=120)  # M140
+    fan_percent: int | None = Field(default=None, ge=0, le=100)  # M106 / M107
+    flow_percent: int | None = Field(default=None, ge=50, le=150)  # M221 (extrusion multiplier)
+    speed_percent: int | None = Field(default=None, ge=20, le=300)  # M220 (feed-rate factor)
 
 
 class SliceSettings(BaseModel):
@@ -57,7 +59,7 @@ class SliceSettings(BaseModel):
     support: bool | None = None
     support_threshold: int | None = Field(default=None, ge=0, le=90)
     retraction_length: float | None = Field(default=None, ge=0, le=6)
-    checkpoint: CoolingCheckpoint | None = None
+    checkpoints: list[Checkpoint] | None = None  # per-height setting changes (post-slice)
     raw: dict[str, str] | None = Field(
         default=None, description="Advanced: arbitrary OrcaSlicer key→value overrides."
     )

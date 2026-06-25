@@ -6,9 +6,7 @@ import { ChevronDown, Download, Loader2, Scissors } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -136,7 +134,6 @@ export function PrintSettingsPanel({
               />
             ) : null}
           </div>
-          <CheckpointControl values={values} onChange={onValueChange} disabled={!hasModel} />
         </>
       ) : (
         <p className="text-xs text-subtle-foreground">Loading settings…</p>
@@ -156,108 +153,6 @@ export function PrintSettingsPanel({
           </Button>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-/**
- * Cooling checkpoint: above a chosen % of the print's height, change nozzle temp / fan — the
- * layers below keep their settings. Fixes heat-soak stringing near the top of tall prints.
- * Stored in the slice values as flat `checkpoint_*` keys (assembled by `buildCheckpoint`).
- */
-function CheckpointControl({
-  values,
-  onChange,
-  disabled,
-}: {
-  values: SettingsValues;
-  onChange: (key: string, value: unknown) => void;
-  disabled?: boolean;
-}) {
-  const from = values["checkpoint_from_pct"];
-  const enabled = typeof from === "number";
-  const fromPct = enabled ? (from as number) : 80;
-  const temp = values["checkpoint_nozzle_temp"];
-  const fan = values["checkpoint_fan_percent"];
-  const num = (e: React.ChangeEvent<HTMLInputElement>) =>
-    e.target.value === "" ? undefined : Number(e.target.value);
-
-  return (
-    <div className="border-t pt-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <Label className="text-xs font-medium">
-            Cooling checkpoint <span className="font-normal text-subtle-foreground">· tall prints</span>
-          </Label>
-          <p className="mt-0.5 text-[11px] text-subtle-foreground">
-            Above a chosen height, drop the temp and/or blast the fan — the layers below keep their
-            settings. Fixes stringing from heat soak near the top.
-          </p>
-        </div>
-        <Switch
-          checked={enabled}
-          disabled={disabled}
-          onCheckedChange={(on) => {
-            if (on) {
-              onChange("checkpoint_from_pct", 80);
-              onChange("checkpoint_fan_percent", 100);
-            } else {
-              onChange("checkpoint_from_pct", undefined);
-              onChange("checkpoint_nozzle_temp", undefined);
-              onChange("checkpoint_fan_percent", undefined);
-            }
-          }}
-        />
-      </div>
-
-      {enabled ? (
-        <div className="mt-3 space-y-3">
-          <div className="space-y-1">
-            <Label className="text-[11px] text-muted-foreground">
-              Apply above <span className="text-foreground">{fromPct}%</span> of the print height
-            </Label>
-            <input
-              type="range"
-              min={5}
-              max={95}
-              step={5}
-              value={fromPct}
-              disabled={disabled}
-              onChange={(e) => onChange("checkpoint_from_pct", Number(e.target.value))}
-              className="w-full accent-primary"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">Nozzle temp °C</Label>
-              <Input
-                type="number"
-                min={150}
-                max={300}
-                placeholder="e.g. 200"
-                value={typeof temp === "number" ? temp : ""}
-                disabled={disabled}
-                onChange={(e) => onChange("checkpoint_nozzle_temp", num(e))}
-                className="h-8"
-              />
-            </div>
-            <div className="space-y-1">
-              <Label className="text-[11px] text-muted-foreground">Fan %</Label>
-              <Input
-                type="number"
-                min={0}
-                max={100}
-                placeholder="100"
-                value={typeof fan === "number" ? fan : ""}
-                disabled={disabled}
-                onChange={(e) => onChange("checkpoint_fan_percent", num(e))}
-                className="h-8"
-              />
-            </div>
-          </div>
-          <p className="text-[11px] text-subtle-foreground">Leave a box blank to not change it.</p>
-        </div>
-      ) : null}
     </div>
   );
 }

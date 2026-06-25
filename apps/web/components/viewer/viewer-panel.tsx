@@ -2,14 +2,14 @@
 
 import { useRef, useState } from "react";
 import type { BuildVolume } from "@agent-cad/types";
-import { Box, Layers, Maximize2, RotateCcw, Printer as PrinterIcon, AlertTriangle, Loader2 } from "lucide-react";
+import { Box, Layers, Flag, Maximize2, RotateCcw, Printer as PrinterIcon, AlertTriangle, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ViewerErrorBoundary } from "./error-boundary";
 import { StlViewer, GcodeViewer } from "./viewer-clients";
 
-export type ViewerTab = "model" | "slice";
+export type ViewerTab = "model" | "slice" | "checkpoints";
 
 export interface ViewerPanelProps {
   /** URL of the current STL artifact (3D Model tab). */
@@ -25,6 +25,10 @@ export interface ViewerPanelProps {
   generating?: boolean;
   /** Show a "slicing…" overlay over the Slice tab. */
   slicing?: boolean;
+  /** The slice-checkpoints editor, rendered in its own tab. */
+  checkpointsSlot?: React.ReactNode;
+  /** Count shown on the Checkpoints tab. */
+  checkpointCount?: number;
   className?: string;
 }
 
@@ -91,6 +95,8 @@ export function ViewerPanel({
   printerName,
   generating,
   slicing,
+  checkpointsSlot,
+  checkpointCount,
   className,
 }: ViewerPanelProps) {
   const [fitKey, setFitKey] = useState(0);
@@ -116,12 +122,20 @@ export function ViewerPanel({
             3D Model
           </TabButton>
           <TabButton
-            active={!showModel}
+            active={tab === "slice"}
             disabled={!gcodeUrl}
             onClick={() => onTabChange("slice")}
             icon={Layers}
           >
             Slice Preview
+          </TabButton>
+          <TabButton
+            active={tab === "checkpoints"}
+            disabled={!stlUrl}
+            onClick={() => onTabChange("checkpoints")}
+            icon={Flag}
+          >
+            Checkpoints{checkpointCount ? ` (${checkpointCount})` : ""}
           </TabButton>
         </div>
         <div className="flex items-center gap-1">
@@ -153,34 +167,40 @@ export function ViewerPanel({
       </div>
 
       <div className="relative min-h-[280px] flex-1 bg-background">
-        <ViewerErrorBoundary
-          resetKey={`${artifactKey}:${fitKey}`}
-          fallback={(error) => (
-            <Placeholder icon={AlertTriangle} title="Couldn't render this artifact" hint={error.message} />
-          )}
-        >
-          {showModel ? (
-            stlUrl ? (
-              // Key on fitKey only (NOT the URL): a refine/chat update changes the URL but must
-              // keep the camera — the viewer reloads the mesh in place. "Reset view" bumps fitKey
-              // to remount + re-frame.
-              <StlViewer key={`stl:${fitKey}`} url={stlUrl} />
-            ) : (
-              <Placeholder
-                icon={Box}
-                title="Your 3D preview will appear here once the spec is locked in."
-                hint="Answer Agent CAD's questions to generate a model."
-              />
-            )
-          ) : gcodeUrl ? (
-            <GcodeViewer key={`gcode:${gcodeUrl}:${fitKey}`} url={gcodeUrl} buildVolume={buildVolume} />
-          ) : (
-            <Placeholder icon={Layers} title="No slice yet" hint="Slice the model to preview toolpaths." />
-          )}
-        </ViewerErrorBoundary>
+        {tab === "checkpoints" ? (
+          checkpointsSlot ?? <Placeholder icon={Flag} title="Slice checkpoints" />
+        ) : (
+          <>
+            <ViewerErrorBoundary
+              resetKey={`${artifactKey}:${fitKey}`}
+              fallback={(error) => (
+                <Placeholder icon={AlertTriangle} title="Couldn't render this artifact" hint={error.message} />
+              )}
+            >
+              {showModel ? (
+                stlUrl ? (
+                  // Key on fitKey only (NOT the URL): a refine/chat update changes the URL but must
+                  // keep the camera — the viewer reloads the mesh in place. "Reset view" bumps fitKey
+                  // to remount + re-frame.
+                  <StlViewer key={`stl:${fitKey}`} url={stlUrl} />
+                ) : (
+                  <Placeholder
+                    icon={Box}
+                    title="Your 3D preview will appear here once the spec is locked in."
+                    hint="Answer Agent CAD's questions to generate a model."
+                  />
+                )
+              ) : gcodeUrl ? (
+                <GcodeViewer key={`gcode:${gcodeUrl}:${fitKey}`} url={gcodeUrl} buildVolume={buildVolume} />
+              ) : (
+                <Placeholder icon={Layers} title="No slice yet" hint="Slice the model to preview toolpaths." />
+              )}
+            </ViewerErrorBoundary>
 
-        {showModel && generating ? <BusyOverlay label="Generating model…" /> : null}
-        {!showModel && slicing ? <BusyOverlay label="Slicing…" /> : null}
+            {tab === "model" && generating ? <BusyOverlay label="Generating model…" /> : null}
+            {tab === "slice" && slicing ? <BusyOverlay label="Slicing…" /> : null}
+          </>
+        )}
       </div>
     </div>
   );

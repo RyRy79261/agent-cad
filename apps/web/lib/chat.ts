@@ -70,22 +70,7 @@ export function buildSliceSettings(
     const v = values[f.key] ?? f.default;
     if (v !== undefined && v !== null && v !== "") body[f.key] = v;
   }
-  const cp = buildCheckpoint(values);
-  if (cp) body.checkpoint = cp;
   return body as SliceSettings;
-}
-
-/** A per-height temp/fan change isn't a descriptor field — assemble it from its own flat keys. */
-export function buildCheckpoint(values: Record<string, unknown>): Record<string, unknown> | null {
-  const from = values["checkpoint_from_pct"];
-  if (typeof from !== "number") return null;
-  const temp = values["checkpoint_nozzle_temp"];
-  const fan = values["checkpoint_fan_percent"];
-  if (typeof temp !== "number" && typeof fan !== "number") return null; // nothing to change
-  const cp: Record<string, unknown> = { from_pct: from };
-  if (typeof temp === "number") cp.nozzle_temp = temp;
-  if (typeof fan === "number") cp.fan_percent = fan;
-  return cp;
 }
 
 /** Shallow value-equality of two SliceSettings-shaped maps (ignores `raw`, treats null≈absent). */
