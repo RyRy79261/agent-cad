@@ -29,6 +29,8 @@ export interface ViewerPanelProps {
   checkpointsSlot?: React.ReactNode;
   /** Count shown on the Checkpoints tab. */
   checkpointCount?: number;
+  /** Add a checkpoint at a layer picked in the Slice Preview. */
+  onAddCheckpointAtLayer?: (layer: number) => void;
   className?: string;
 }
 
@@ -97,6 +99,7 @@ export function ViewerPanel({
   slicing,
   checkpointsSlot,
   checkpointCount,
+  onAddCheckpointAtLayer,
   className,
 }: ViewerPanelProps) {
   const [fitKey, setFitKey] = useState(0);
@@ -191,7 +194,12 @@ export function ViewerPanel({
                   />
                 )
               ) : gcodeUrl ? (
-                <GcodeViewer key={`gcode:${gcodeUrl}:${fitKey}`} url={gcodeUrl} buildVolume={buildVolume} />
+                <GcodeViewer
+                  key={`gcode:${gcodeUrl}:${fitKey}`}
+                  url={gcodeUrl}
+                  buildVolume={buildVolume}
+                  onAddCheckpoint={onAddCheckpointAtLayer}
+                />
               ) : (
                 <Placeholder icon={Layers} title="No slice yet" hint="Slice the model to preview toolpaths." />
               )}

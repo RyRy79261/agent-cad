@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class BuildRequest(BaseModel):
@@ -27,12 +27,21 @@ class Checkpoint(BaseModel):
     and can't change mid-print — they need a re-slice.)
     """
 
-    from_pct: float = Field(..., ge=0, le=100, description="Apply above this % of the model's height.")
+    # Anchor: a % of the print height OR a specific layer number (e.g. picked in the slice
+    # preview). Exactly one is needed; ``from_layer`` wins if both are given.
+    from_pct: float | None = Field(default=None, ge=0, le=100, description="Apply above this % of height.")
+    from_layer: int | None = Field(default=None, ge=1, description="Or: apply from this layer number up.")
     nozzle_temp: int | None = Field(default=None, ge=150, le=300)  # M104
     bed_temp: int | None = Field(default=None, ge=0, le=120)  # M140
     fan_percent: int | None = Field(default=None, ge=0, le=100)  # M106 / M107
     flow_percent: int | None = Field(default=None, ge=50, le=150)  # M221 (extrusion multiplier)
     speed_percent: int | None = Field(default=None, ge=20, le=300)  # M220 (feed-rate factor)
+
+    @model_validator(mode="after")
+    def _needs_anchor(self) -> Checkpoint:
+        if self.from_pct is None and self.from_layer is None:
+            raise ValueError("a checkpoint needs from_pct or from_layer")
+        return self
 
 
 class SliceSettings(BaseModel):

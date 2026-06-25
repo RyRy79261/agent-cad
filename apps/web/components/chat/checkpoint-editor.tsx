@@ -34,10 +34,7 @@ export function CheckpointEditor({ checkpoints, onChange, modelHeightMm, disable
   const update = (i: number, patch: Partial<Checkpoint>) =>
     onChange(checkpoints.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   const remove = (i: number) => onChange(checkpoints.filter((_, j) => j !== i));
-  const add = () =>
-    onChange(
-      [...checkpoints, { from_pct: 80, fan_percent: 100 } as Checkpoint].sort((a, b) => a.from_pct - b.from_pct),
-    );
+  const add = () => onChange([...checkpoints, { from_pct: 80, fan_percent: 100 } as Checkpoint]);
   const num = (e: React.ChangeEvent<HTMLInputElement>) =>
     e.target.value === "" ? undefined : Number(e.target.value);
 
@@ -46,9 +43,11 @@ export function CheckpointEditor({ checkpoints, onChange, modelHeightMm, disable
       <div>
         <h3 className="text-sm font-semibold">Slice checkpoints</h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          From a point in the print upward, change the settings — the layers below keep theirs. Stack
-          several to ramp things up the print (e.g. drop the temp and max the fan near the top to kill
-          heat-soak stringing). Blank fields are left unchanged.
+          From a point in the print upward, change the settings — the layers below keep theirs. Anchor
+          a checkpoint by % here, or scrub to a layer in the <span className="text-foreground">Slice
+          Preview</span> and hit “+ Checkpoint here”. Stack several to ramp things up the print (e.g.
+          drop the temp and max the fan near the top to kill heat-soak stringing). Blank fields are
+          left unchanged.
         </p>
         <p className="mt-1 text-[11px] text-subtle-foreground">
           Retraction, walls and infill are baked into the toolpaths, so they can&apos;t change mid-print.
@@ -63,13 +62,22 @@ export function CheckpointEditor({ checkpoints, onChange, modelHeightMm, disable
       ) : null}
 
       {checkpoints.map((cp, i) => {
-        const mm = modelHeightMm ? ` ≈ ${((cp.from_pct / 100) * modelHeightMm).toFixed(0)}mm` : "";
+        const byLayer = cp.from_layer != null;
+        const mm = !byLayer && modelHeightMm ? ` ≈ ${(((cp.from_pct ?? 0) / 100) * modelHeightMm).toFixed(0)}mm` : "";
         return (
           <div key={i} className="space-y-3 rounded-lg border bg-elevated p-3">
             <div className="flex items-center justify-between gap-2">
               <span className="inline-flex items-center gap-1.5 text-xs font-medium">
                 <Flag className="h-3.5 w-3.5 text-primary" />
-                From <span className="text-foreground">{cp.from_pct}%</span> up{mm}
+                {byLayer ? (
+                  <>
+                    From layer <span className="text-foreground">{cp.from_layer}</span> up
+                  </>
+                ) : (
+                  <>
+                    From <span className="text-foreground">{cp.from_pct}%</span> up{mm}
+                  </>
+                )}
               </span>
               <button
                 type="button"
@@ -81,16 +89,31 @@ export function CheckpointEditor({ checkpoints, onChange, modelHeightMm, disable
                 <Trash2 className="h-4 w-4" />
               </button>
             </div>
-            <input
-              type="range"
-              min={5}
-              max={98}
-              step={1}
-              value={cp.from_pct}
-              disabled={disabled}
-              onChange={(e) => update(i, { from_pct: Number(e.target.value) })}
-              className="w-full accent-primary"
-            />
+            {byLayer ? (
+              <div className="flex items-center gap-2">
+                <Label className="text-[11px] text-muted-foreground">Layer</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={cp.from_layer ?? ""}
+                  disabled={disabled}
+                  onChange={(e) => update(i, { from_layer: e.target.value === "" ? 1 : Number(e.target.value) })}
+                  className="h-8 w-24"
+                />
+                <span className="text-[11px] text-subtle-foreground">(set from the Slice Preview)</span>
+              </div>
+            ) : (
+              <input
+                type="range"
+                min={5}
+                max={98}
+                step={1}
+                value={cp.from_pct ?? 80}
+                disabled={disabled}
+                onChange={(e) => update(i, { from_pct: Number(e.target.value) })}
+                className="w-full accent-primary"
+              />
+            )}
             <div className="grid grid-cols-3 gap-2">
               {FIELDS.map((f) => (
                 <div key={f.key} className="space-y-1">

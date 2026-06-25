@@ -159,7 +159,9 @@ export type PartSummary = z.infer<typeof PartSummary>;
  * command). Stack several. Retraction/walls/infill can't change mid-print (need a re-slice).
  */
 export const Checkpoint = z.object({
-  from_pct: z.number().min(0).max(100),
+  // Anchor on a % of the print height OR a specific layer (e.g. picked in the slice preview).
+  from_pct: z.number().min(0).max(100).nullish(),
+  from_layer: z.number().int().min(1).nullish(),
   nozzle_temp: z.number().int().min(150).max(300).nullish(),
   bed_temp: z.number().int().min(0).max(120).nullish(),
   fan_percent: z.number().int().min(0).max(100).nullish(),

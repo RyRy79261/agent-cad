@@ -755,6 +755,10 @@ export function ChatWorkspace() {
               generating={generating}
               slicing={slicing}
               checkpointCount={checkpoints.length}
+              onAddCheckpointAtLayer={(layer) => {
+                setCheckpoints((c) => [...c, { from_layer: layer, fan_percent: 100 }]);
+                setTab("checkpoints");
+              }}
               checkpointsSlot={
                 <CheckpointEditor
                   checkpoints={checkpoints}

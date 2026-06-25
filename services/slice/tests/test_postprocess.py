@@ -6,14 +6,27 @@ from slicer.postprocess import apply_checkpoints
 
 
 def _synthetic_gcode(tmp_path):
-    # Ten printing layers, Z 0.2 .. 2.0 (max 2.0mm), each Z move followed by an extruding move.
+    # Ten printing layers, Z 0.2 .. 2.0 (max 2.0mm), each preceded by a ;LAYER_CHANGE marker
+    # and followed by an extruding move.
     lines = [";START", "G1 Z50 F600 ; start-gcode clearance, no extrusion"]
     for i in range(1, 11):
+        lines.append(";LAYER_CHANGE")
         lines.append(f"G1 Z{i * 0.2:.1f} F300")
         lines.append(f"G1 X10 Y10 E{i} ; layer {i}")
     g = tmp_path / "out.gcode"
     g.write_text("\n".join(lines) + "\n")
     return g
+
+
+def test_layer_anchored_checkpoint(tmp_path):
+    g = _synthetic_gcode(tmp_path)
+    # "from layer 8 up" → inject at the 8th ;LAYER_CHANGE (Z1.6), not a %.
+    assert apply_checkpoints(g, [{"from_layer": 8, "nozzle_temp": 190}]) == 1
+    out = g.read_text().splitlines()
+    inj = next(i for i, line in enumerate(out) if "M104 S190" in line)
+    # it lands in layer 8: after the 8th ;LAYER_CHANGE and at/after Z1.6, before layer 9 (Z1.8).
+    assert out.index("G1 Z1.6 F300") < inj < out.index("G1 Z1.8 F300")
+    assert "@layer 8" in out[inj]
 
 
 def test_multiple_checkpoints_inject_at_their_heights(tmp_path):

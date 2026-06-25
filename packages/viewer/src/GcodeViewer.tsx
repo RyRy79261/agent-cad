@@ -16,6 +16,8 @@ export interface GcodeViewerProps {
   backgroundColor?: number;
   /** Extruded-path colour (hex int, e.g. 0x3b82f6). */
   extrusionColor?: number;
+  /** Called with the current layer when the user adds a checkpoint from the preview. */
+  onAddCheckpoint?: (layer: number) => void;
   className?: string;
 }
 
@@ -42,6 +44,7 @@ export function GcodeViewer({
   buildVolume = ENDER_5_S1.build_volume,
   backgroundColor = DEFAULT_GCODE_BACKGROUND,
   extrusionColor = DEFAULT_GCODE_EXTRUSION,
+  onAddCheckpoint,
   className,
 }: GcodeViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -107,10 +110,31 @@ export function GcodeViewer({
       {error ? <p style={{ color: "#fca5a5", fontSize: "0.8rem", margin: 4 }}>g-code preview error: {error}</p> : null}
       {maxLayer > 0 ? (
         <div style={{ padding: "8px 10px", fontSize: "0.78rem", color: "#9aa7bd" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
             <span>Layer preview</span>
-            <span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
-              Layer {layer} / {maxLayer}
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
+                Layer {layer} / {maxLayer}
+              </span>
+              {onAddCheckpoint ? (
+                <button
+                  type="button"
+                  onClick={() => onAddCheckpoint(layer)}
+                  title="Add a slice checkpoint at this layer"
+                  style={{
+                    cursor: "pointer",
+                    borderRadius: 6,
+                    border: "1px solid #3b82f6",
+                    color: "#bcd2ff",
+                    background: "transparent",
+                    padding: "2px 8px",
+                    fontSize: "0.72rem",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  + Checkpoint here
+                </button>
+              ) : null}
             </span>
           </div>
           <input
