@@ -37,7 +37,9 @@ def test_literal_options_are_derived():
 
 def test_covers_all_slicesettings_fields_except_raw():
     keys = {f.key for f in build_descriptor(seed_ender5s1()).fields}
-    expected = set(SliceSettings.model_fields) - {"raw"}
+    # `raw` (arbitrary overrides) and `checkpoint` (a post-slice per-height temp/fan change)
+    # aren't flat descriptor-driven controls — they have their own UI.
+    expected = set(SliceSettings.model_fields) - {"raw", "checkpoint"}
     assert keys == expected
 
 

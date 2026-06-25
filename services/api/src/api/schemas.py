@@ -20,11 +20,25 @@ class BuildRequest(BaseModel):
     verify: bool = Field(default=False, description="Run printability checks on the result.")
 
 
+class CoolingCheckpoint(BaseModel):
+    """From ``from_pct``% of the print's height upward, change the nozzle temp and/or fan.
+
+    For heat-soak on tall prints: the lower layers keep the profile's settings (they print
+    fine), and above the checkpoint the temp drops / fan ramps to kill the stringing the heat
+    build-up causes near the top. Applied as a one-time g-code injection after slicing.
+    """
+
+    from_pct: float = Field(..., ge=0, le=100, description="Apply above this % of the model's height.")
+    nozzle_temp: int | None = Field(default=None, ge=150, le=300)
+    fan_percent: int | None = Field(default=None, ge=0, le=100)
+
+
 class SliceSettings(BaseModel):
     """Per-slice overrides of the committed Ender 5 S1 profile — all optional.
 
     Unset fields keep the committed default. ``raw`` is the power-user escape hatch:
     arbitrary OrcaSlicer ``key: value`` pairs (see ``slicer.profiles.route_raw_overrides``).
+    ``checkpoint`` is a post-slice per-height temp/fan change (not an OrcaSlicer key).
     """
 
     infill_density: int | None = Field(default=None, ge=0, le=100)
@@ -43,6 +57,7 @@ class SliceSettings(BaseModel):
     support: bool | None = None
     support_threshold: int | None = Field(default=None, ge=0, le=90)
     retraction_length: float | None = Field(default=None, ge=0, le=6)
+    checkpoint: CoolingCheckpoint | None = None
     raw: dict[str, str] | None = Field(
         default=None, description="Advanced: arbitrary OrcaSlicer key→value overrides."
     )

@@ -6,6 +6,7 @@ import { AlertCircle, Upload, Hammer, SquarePen, PanelRight, MoreHorizontal, Box
 
 import * as api from "@/lib/api";
 import {
+  buildCheckpoint,
   buildSliceSettings,
   currentStlUrl,
   isDirty,
@@ -414,10 +415,12 @@ export function ChatWorkspace() {
     setSlicing(true);
     setError(null);
     try {
-      const body =
-        descriptor && isDirty(descriptor, sliceValues)
-          ? { filament_id: filamentId ?? undefined, settings: buildSliceSettings(descriptor, sliceValues) }
-          : { filament_id: filamentId ?? undefined };
+      // Send `settings` when the user changed a descriptor field OR set a cooling checkpoint
+      // (the checkpoint isn't a descriptor field, so isDirty alone misses it).
+      const overridden = descriptor && (isDirty(descriptor, sliceValues) || buildCheckpoint(sliceValues));
+      const body = overridden
+        ? { filament_id: filamentId ?? undefined, settings: buildSliceSettings(descriptor, sliceValues) }
+        : { filament_id: filamentId ?? undefined };
       await api.runJob(() => api.chatSlice(active.id, body));
       setActive(await api.getChat(active.id));
       setTab("slice"); // auto-switch to Slice Preview on success (FR-CHAT-5)

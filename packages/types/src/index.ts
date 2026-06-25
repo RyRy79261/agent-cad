@@ -153,6 +153,18 @@ export type PartSummary = z.infer<typeof PartSummary>;
  * min/max/options derive from here). `infill_pattern`/`seam_position` are enums on both
  * sides so the server rejects garbage.
  */
+/**
+ * A per-height temp/fan change applied after slicing — mirrors `CoolingCheckpoint`. From
+ * `from_pct`% of the model's height up, the nozzle temp drops / fan ramps (the lower layers
+ * keep the profile's settings). For heat-soak stringing on tall prints.
+ */
+export const CoolingCheckpoint = z.object({
+  from_pct: z.number().min(0).max(100),
+  nozzle_temp: z.number().int().min(150).max(300).nullish(),
+  fan_percent: z.number().int().min(0).max(100).nullish(),
+});
+export type CoolingCheckpoint = z.infer<typeof CoolingCheckpoint>;
+
 export const SliceSettings = z.object({
   infill_density: z.number().int().min(0).max(100).nullish(),
   wall_speed: z.number().int().min(5).max(120).nullish(),
@@ -170,6 +182,7 @@ export const SliceSettings = z.object({
   support: z.boolean().nullish(),
   support_threshold: z.number().int().min(0).max(90).nullish(),
   retraction_length: z.number().min(0).max(6).nullish(),
+  checkpoint: CoolingCheckpoint.nullish(),
   raw: z.record(z.string(), z.string()).nullish(),
 });
 export type SliceSettings = z.infer<typeof SliceSettings>;

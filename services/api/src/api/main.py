@@ -415,7 +415,8 @@ def _run_slice_inline(stl: Path, out_dir: Path, url_prefix: str, settings: Slice
         slice_overrides,
     )
 
-    typed = settings.model_dump(exclude={"raw"}, exclude_none=True)
+    # `checkpoint` is a post-slice g-code edit, not an OrcaSlicer key — keep it out of the overrides.
+    typed = settings.model_dump(exclude={"raw", "checkpoint"}, exclude_none=True)
     raw = settings.raw or {}
     archive = out_dir / f"{stl.stem}.gcode.3mf"
     profiles = ender5s1_profiles()
@@ -439,6 +440,14 @@ def _run_slice_inline(stl: Path, out_dir: Path, url_prefix: str, settings: Slice
     result["override_warnings"] = warnings
     gpath = result.get("gcode_path")
     if result.get("ok") and gpath:
+        cp = settings.checkpoint
+        if cp is not None:
+            from slicer.postprocess import apply_cooling_checkpoint
+
+            applied = apply_cooling_checkpoint(
+                gpath, from_pct=cp.from_pct, nozzle_temp=cp.nozzle_temp, fan_percent=cp.fan_percent
+            )
+            result["cooling_checkpoint"] = {"applied": applied, **cp.model_dump()}
         result["gcode_url"] = f"{url_prefix}/{Path(gpath).name}"
         layers = count_gcode_layers(gpath)
         if layers is not None:
