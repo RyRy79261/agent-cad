@@ -36,6 +36,8 @@ class Checkpoint(BaseModel):
     fan_percent: int | None = Field(default=None, ge=0, le=100)  # M106 / M107
     flow_percent: int | None = Field(default=None, ge=50, le=150)  # M221 (extrusion multiplier)
     speed_percent: int | None = Field(default=None, ge=20, le=300)  # M220 (feed-rate factor)
+    jerk: int | None = Field(default=None, ge=1, le=40)  # M205 X/Y (mm/s)
+    accel: int | None = Field(default=None, ge=100, le=10000)  # M204 P (print accel, mm/s²)
 
     @model_validator(mode="after")
     def _needs_anchor(self) -> Checkpoint:

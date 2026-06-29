@@ -47,6 +47,11 @@ def _checkpoint_gcode(cp: Mapping, anchor: str) -> list[str]:
         out.append(f"M221 S{int(cp['flow_percent'])} ; {tag}: flow %")
     if cp.get("speed_percent") is not None:
         out.append(f"M220 S{int(cp['speed_percent'])} ; {tag}: speed %")
+    if cp.get("jerk") is not None:
+        j = int(cp["jerk"])
+        out.append(f"M205 X{j} Y{j} ; {tag}: jerk")
+    if cp.get("accel") is not None:
+        out.append(f"M204 P{int(cp['accel'])} ; {tag}: acceleration")
     return out
 
 

@@ -56,6 +56,14 @@ def test_fan_off_uses_m107_and_flow_scales(tmp_path):
     assert "M107 ; checkpoint @0%: fan off" in out and "M221 S95" in out
 
 
+def test_motion_settings_inject_m205_and_m204(tmp_path):
+    g = _synthetic_gcode(tmp_path)
+    assert apply_checkpoints(g, [{"from_pct": 0, "jerk": 12, "accel": 800}]) == 1
+    out = g.read_text()
+    assert "M205 X12 Y12 ; checkpoint @0%: jerk" in out
+    assert "M204 P800 ; checkpoint @0%: acceleration" in out
+
+
 def test_noop_when_no_settings(tmp_path):
     g = _synthetic_gcode(tmp_path)
     assert apply_checkpoints(g, [{"from_pct": 80}]) == 0  # no fields set → nothing to inject

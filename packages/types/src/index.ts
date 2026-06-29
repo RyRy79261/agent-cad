@@ -167,6 +167,8 @@ export const Checkpoint = z.object({
   fan_percent: z.number().int().min(0).max(100).nullish(),
   flow_percent: z.number().int().min(50).max(150).nullish(),
   speed_percent: z.number().int().min(20).max(300).nullish(),
+  jerk: z.number().int().min(1).max(40).nullish(),
+  accel: z.number().int().min(100).max(10000).nullish(),
 });
 export type Checkpoint = z.infer<typeof Checkpoint>;
 

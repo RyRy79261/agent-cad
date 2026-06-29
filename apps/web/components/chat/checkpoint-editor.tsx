@@ -16,6 +16,8 @@ const FIELDS: { key: keyof Checkpoint; label: string; unit: string; min: number;
   { key: "fan_percent", label: "Fan", unit: "%", min: 0, max: 100, ph: "100" },
   { key: "flow_percent", label: "Flow", unit: "%", min: 50, max: 150, ph: "100" },
   { key: "speed_percent", label: "Speed", unit: "%", min: 20, max: 300, ph: "100" },
+  { key: "jerk", label: "Jerk", unit: "mm/s", min: 1, max: 40, ph: "8" },
+  { key: "accel", label: "Accel", unit: "mm/s²", min: 100, max: 10000, ph: "500" },
 ];
 
 export interface CheckpointEditorProps {
@@ -50,7 +52,10 @@ export function CheckpointEditor({ checkpoints, onChange, modelHeightMm, disable
           left unchanged.
         </p>
         <p className="mt-1 text-[11px] text-subtle-foreground">
-          Retraction, walls and infill are baked into the toolpaths, so they can&apos;t change mid-print.
+          These are everything the printer can change <span className="text-foreground">mid-print</span>
+          (temperature, cooling, flow, speed, motion). The rest — walls, infill, layer height,
+          retraction, seam, supports, brim — are baked into the toolpaths when slicing, so they apply
+          to the whole print; set those in the print-settings panel.
         </p>
       </div>
 
