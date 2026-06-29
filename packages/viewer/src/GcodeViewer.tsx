@@ -1,7 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Box3, type Object3D, type PerspectiveCamera, Vector3 } from "three";
+import {
+  Box3,
+  Color,
+  type BufferAttribute,
+  type BufferGeometry,
+  type Mesh,
+  type Object3D,
+  type PerspectiveCamera,
+  Vector3,
+} from "three";
 import { ENDER_5_S1, type BuildVolume } from "@agent-cad/types";
 
 /** Dark canvas + brand-blue extrusion to match the Agent CAD viewer (tokens --background / --primary). */
@@ -79,6 +88,52 @@ function framePart(preview: Preview): void {
 }
 
 /**
+ * Recolour the printed extrusion by checkpoint band: every layer at/above a checkpoint's height
+ * takes that checkpoint's colour (the layers below stay the base colour), so you can SEE that a
+ * checkpoint's settings carry through the rest of the print — not just the one layer. gcode-preview
+ * renders with per-vertex colours (its gradient), so we overwrite the colour attribute by the
+ * vertex's height (Y is up). Wrapped in try/catch by the caller; failure just keeps default colours.
+ */
+function colorizeBands(
+  preview: Preview,
+  bands: { layer: number; color: string }[],
+  maxLayer: number,
+  baseColor: number,
+): void {
+  const p = preview as unknown as { scene?: Object3D; group?: Object3D; render(): void };
+  const root = p.group ?? p.scene;
+  if (!root || maxLayer <= 0 || !bands.length) return;
+  const box = new Box3().setFromObject(root);
+  if (box.isEmpty()) return;
+  const minY = box.min.y;
+  const span = box.max.y - box.min.y || 1;
+  const thresholds = [...bands]
+    .sort((a, b) => a.layer - b.layer)
+    .map((b) => ({ y: minY + (b.layer / maxLayer) * span, color: new Color(b.color) }));
+  const base = new Color(baseColor);
+  const pick = (y: number): Color => {
+    let c = base;
+    for (const t of thresholds) {
+      if (y >= t.y) c = t.color;
+      else break;
+    }
+    return c;
+  };
+  root.traverse((obj) => {
+    const geom = (obj as Mesh).geometry as BufferGeometry | undefined;
+    const pos = geom?.getAttribute?.("position") as BufferAttribute | undefined;
+    const col = geom?.getAttribute?.("color") as BufferAttribute | undefined;
+    if (!geom || !pos || !col || col.count !== pos.count || col.itemSize < 3) return;
+    for (let i = 0; i < pos.count; i++) {
+      const c = pick(pos.getY(i));
+      col.setXYZ(i, c.r, c.g, c.b);
+    }
+    col.needsUpdate = true;
+  });
+  p.render();
+}
+
+/**
  * G-code toolpath / layer preview via gcode-preview (three.js), with a layer
  * slider. gcode-preview is imported lazily so it never loads on the server or
  * bloats other viewers' bundles.
@@ -106,6 +161,26 @@ export function GcodeViewer({
     }))
     .filter(() => maxLayer > 0)
     .sort((a, b) => a.layer - b.layer);
+
+  // The progress bar coloured by band: base colour up to the first checkpoint, then each
+  // checkpoint's colour through the rest — matching the recoloured 3D extrusion.
+  const baseHex = `#${(extrusionColor & 0xffffff).toString(16).padStart(6, "0")}`;
+  const bandGradient =
+    markers.length && maxLayer > 0
+      ? (() => {
+          const segs: string[] = [];
+          let start = 0;
+          let color = baseHex;
+          for (const m of markers) {
+            const pos = (m.layer / maxLayer) * 100;
+            segs.push(`${color} ${start}%`, `${color} ${pos}%`);
+            start = pos;
+            color = m.color;
+          }
+          segs.push(`${color} ${start}%`, `${color} 100%`);
+          return `linear-gradient(to right, ${segs.join(", ")})`;
+        })()
+      : null;
 
   useEffect(() => {
     let cancelled = false;
@@ -141,6 +216,22 @@ export function GcodeViewer({
       previewRef.current = null;
     };
   }, [url, buildVolume, backgroundColor, extrusionColor]);
+
+  // Recolour the extrusion bands once the slice is loaded (and whenever the checkpoints change).
+  // `checkpoints` is memoised by the parent (stable per slice), so this doesn't re-walk every render.
+  useEffect(() => {
+    const preview = previewRef.current;
+    if (!preview || maxLayer <= 0) return;
+    const bands = (checkpoints ?? []).map((c) => ({
+      layer: Math.max(1, Math.min(maxLayer, c.layer ?? Math.round(((c.pct ?? 0) / 100) * maxLayer))),
+      color: c.color,
+    }));
+    try {
+      colorizeBands(preview, bands, maxLayer, extrusionColor);
+    } catch {
+      /* keep gcode-preview's default colours if recolouring fails */
+    }
+  }, [checkpoints, maxLayer, extrusionColor]);
 
   function onLayer(value: number) {
     setLayer(value);
@@ -196,25 +287,12 @@ export function GcodeViewer({
             </span>
           </div>
           <div style={{ position: "relative", width: "100%" }}>
-            {/* Checkpoint markers on the timeline — a coloured tick at each checkpoint's layer. */}
-            {markers.length ? (
-              <div style={{ position: "relative", height: 7, marginBottom: 3 }}>
-                {markers.map((m, i) => (
-                  <div
-                    key={i}
-                    title={`Layer ${m.layer}: ${m.label}`}
-                    style={{
-                      position: "absolute",
-                      left: `${(m.layer / maxLayer) * 100}%`,
-                      transform: "translateX(-50%)",
-                      width: 3,
-                      height: 7,
-                      borderRadius: 1.5,
-                      background: m.color,
-                    }}
-                  />
-                ))}
-              </div>
+            {/* The progress bar, coloured by checkpoint band (matches the recoloured 3D extrusion). */}
+            {bandGradient ? (
+              <div
+                title="Each colour is a checkpoint's settings, applied from there through the rest of the print"
+                style={{ height: 8, borderRadius: 4, marginBottom: 4, background: bandGradient }}
+              />
             ) : null}
             <input
               type="range"

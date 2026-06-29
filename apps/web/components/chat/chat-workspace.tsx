@@ -459,13 +459,18 @@ export function ChatWorkspace() {
   const gcodeRef = latestArtifact(active, "gcode");
   const gcodeUrl = gcodeRef ? versioned(api.assetUrl(gcodeRef.url), active) : null;
   const stats = sliceStatsFrom(gcodeRef);
-  // Checkpoints actually baked into this slice (from slice_info) → coloured timeline markers.
-  const gcodeCheckpoints = sliceCheckpointsFrom(gcodeRef).map((cp, i) => ({
-    layer: cp.from_layer ?? null,
-    pct: cp.from_pct ?? null,
-    label: checkpointLabel(cp),
-    color: CHECKPOINT_COLORS[i % CHECKPOINT_COLORS.length] ?? "#3b82f6",
-  }));
+  // Checkpoints actually baked into this slice (from slice_info) → coloured markers + 3D bands.
+  // Memoised by the g-code ref so the viewer's per-vertex recolour runs per-slice, not per-render.
+  const gcodeCheckpoints = React.useMemo(
+    () =>
+      sliceCheckpointsFrom(gcodeRef).map((cp, i) => ({
+        layer: cp.from_layer ?? null,
+        pct: cp.from_pct ?? null,
+        label: checkpointLabel(cp),
+        color: cp.color ?? CHECKPOINT_COLORS[i % CHECKPOINT_COLORS.length] ?? "#3b82f6",
+      })),
+    [gcodeRef],
+  );
   const status = active?.status ?? "new";
   // True while a server-side job for THIS chat is running — whether we started it this session
   // or re-attached to one we navigated back to (so the composer stays disabled + busy shows).
@@ -771,7 +776,11 @@ export function ChatWorkspace() {
               onAddCheckpointAtLayer={(layer) => {
                 setCheckpoints((c) => [
                   ...c,
-                  { ...checkpointSeed(c, checkpointDefaults(descriptor, sliceValues)), from_layer: layer },
+                  {
+                    ...checkpointSeed(c, checkpointDefaults(descriptor, sliceValues)),
+                    from_layer: layer,
+                    color: CHECKPOINT_COLORS[c.length % CHECKPOINT_COLORS.length],
+                  },
                 ]);
                 setTab("checkpoints");
               }}

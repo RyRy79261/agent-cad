@@ -5,7 +5,7 @@ import type { Checkpoint } from "@agent-cad/types";
 import { Flag, Plus, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { checkpointSeed } from "@/lib/chat";
+import { checkpointSeed, CHECKPOINT_COLORS } from "@/lib/chat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -51,9 +51,17 @@ export function CheckpointEditor({
   const update = (i: number, patch: Partial<Checkpoint>) =>
     onChange(checkpoints.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   const remove = (i: number) => onChange(checkpoints.filter((_, j) => j !== i));
-  // A new checkpoint inherits the previous one's settings (or the print's base settings if first).
+  // A new checkpoint inherits the previous one's settings (or the print's base settings if first),
+  // but gets a fresh distinct colour so its band is easy to tell apart in the slice preview.
   const add = () =>
-    onChange([...checkpoints, { ...checkpointSeed(checkpoints, newDefaults ?? {}), from_pct: 80 } as Checkpoint]);
+    onChange([
+      ...checkpoints,
+      {
+        ...checkpointSeed(checkpoints, newDefaults ?? {}),
+        from_pct: 80,
+        color: CHECKPOINT_COLORS[checkpoints.length % CHECKPOINT_COLORS.length],
+      } as Checkpoint,
+    ]);
   const num = (e: React.ChangeEvent<HTMLInputElement>) =>
     e.target.value === "" ? undefined : Number(e.target.value);
 
@@ -102,7 +110,7 @@ export function CheckpointEditor({
           <div key={i} className="space-y-3 rounded-lg border bg-elevated p-3">
             <div className="flex items-center justify-between gap-2">
               <span className="inline-flex items-center gap-1.5 text-xs font-medium">
-                <Flag className="h-3.5 w-3.5 text-primary" />
+                <Flag className="h-3.5 w-3.5" style={{ color: cp.color ?? "var(--primary)" }} />
                 {byLayer ? (
                   <>
                     From layer <span className="text-foreground">{cp.from_layer}</span> up
@@ -182,6 +190,24 @@ export function CheckpointEditor({
                 />
               )}
             </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[10px] text-muted-foreground">Band colour</span>
+              {CHECKPOINT_COLORS.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => update(i, { color: c })}
+                  aria-label={`Use colour ${c}`}
+                  style={{ background: c }}
+                  className={cn(
+                    "h-4 w-4 rounded-full border border-black/20 transition-transform hover:scale-110",
+                    cp.color === c ? "ring-2 ring-foreground ring-offset-1 ring-offset-elevated" : "",
+                  )}
+                />
+              ))}
+            </div>
+
             <div className="grid grid-cols-3 gap-2">
               {FIELDS.map((f) => (
                 <div key={f.key} className="space-y-1">

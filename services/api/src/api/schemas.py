@@ -38,6 +38,7 @@ class Checkpoint(BaseModel):
     speed_percent: int | None = Field(default=None, ge=20, le=300)  # M220 (feed-rate factor)
     jerk: int | None = Field(default=None, ge=1, le=40)  # M205 X/Y (mm/s)
     accel: int | None = Field(default=None, ge=100, le=10000)  # M204 P (print accel, mm/s²)
+    color: str | None = None  # UI only: the band colour for this checkpoint in the slice preview
 
     @model_validator(mode="after")
     def _needs_anchor(self) -> Checkpoint:

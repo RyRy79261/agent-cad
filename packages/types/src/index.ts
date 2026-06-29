@@ -169,6 +169,7 @@ export const Checkpoint = z.object({
   speed_percent: z.number().int().min(20).max(300).nullish(),
   jerk: z.number().int().min(1).max(40).nullish(),
   accel: z.number().int().min(100).max(10000).nullish(),
+  color: z.string().nullish(), // UI: the band colour in the slice preview
 });
 export type Checkpoint = z.infer<typeof Checkpoint>;
 
