@@ -590,13 +590,19 @@ def _update_chat_after_slice(chat_id: str, result: dict, gpath: object) -> None:
     if result.get("ok") and gpath:
         gname = Path(str(gpath)).name
         chat.status = "ready-to-print"
+        # Carry the per-height checkpoints baked into THIS g-code so the UI can show them on the
+        # slice (it can't trust the live editor state, which may have changed since slicing).
+        info = result.get("info")
+        cps = result.get("checkpoints")
+        if cps:
+            info = {**(info or {}), "checkpoints": cps}
         refs = [
             ArtifactRef(
                 kind="gcode",
                 name=gname,
                 fmt="gcode",
                 url=f"/chats/{chat_id}/artifacts/{gname}",
-                slice_info=result.get("info"),
+                slice_info=info,
             )
         ]
     else:

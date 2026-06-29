@@ -19,7 +19,17 @@ export interface GcodeViewerProps {
   extrusionColor?: number;
   /** Called with the current layer when the user adds a checkpoint from the preview. */
   onAddCheckpoint?: (layer: number) => void;
+  /** Checkpoints baked into THIS g-code — drawn as coloured markers on the layer timeline. */
+  checkpoints?: GcodeCheckpointMarker[];
   className?: string;
+}
+
+/** A checkpoint to mark on the layer timeline (anchored by layer or % of layers). */
+export interface GcodeCheckpointMarker {
+  layer?: number | null;
+  pct?: number | null;
+  label: string;
+  color: string;
 }
 
 interface Vec3 {
@@ -79,6 +89,7 @@ export function GcodeViewer({
   backgroundColor = DEFAULT_GCODE_BACKGROUND,
   extrusionColor = DEFAULT_GCODE_EXTRUSION,
   onAddCheckpoint,
+  checkpoints,
   className,
 }: GcodeViewerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -86,6 +97,15 @@ export function GcodeViewer({
   const [maxLayer, setMaxLayer] = useState(0);
   const [layer, setLayer] = useState(0);
   const [error, setError] = useState<string | null>(null);
+
+  // Resolve each checkpoint to a layer on this slice's timeline (% → layer via the real count).
+  const markers = (checkpoints ?? [])
+    .map((c) => ({
+      ...c,
+      layer: Math.max(1, Math.min(maxLayer, c.layer ?? Math.round(((c.pct ?? 0) / 100) * maxLayer))),
+    }))
+    .filter(() => maxLayer > 0)
+    .sort((a, b) => a.layer - b.layer);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,7 +162,14 @@ export function GcodeViewer({
       {maxLayer > 0 ? (
         <div style={{ padding: "8px 10px", fontSize: "0.78rem", color: "#9aa7bd" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-            <span>Layer preview</span>
+            <span>
+              Layer preview
+              {markers.length ? (
+                <span style={{ color: "#34d399", marginLeft: 8 }}>
+                  · {markers.length} checkpoint{markers.length > 1 ? "s" : ""} baked in
+                </span>
+              ) : null}
+            </span>
             <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
                 Layer {layer} / {maxLayer}
@@ -168,15 +195,49 @@ export function GcodeViewer({
               ) : null}
             </span>
           </div>
-          <input
-            type="range"
-            min={1}
-            max={maxLayer}
-            value={layer}
-            onChange={(e) => onLayer(Number(e.target.value))}
-            aria-label="layer"
-            style={{ width: "100%", accentColor: "#3b82f6" }}
-          />
+          <div style={{ position: "relative", width: "100%" }}>
+            {/* Checkpoint markers on the timeline — a coloured tick at each checkpoint's layer. */}
+            {markers.length ? (
+              <div style={{ position: "relative", height: 7, marginBottom: 3 }}>
+                {markers.map((m, i) => (
+                  <div
+                    key={i}
+                    title={`Layer ${m.layer}: ${m.label}`}
+                    style={{
+                      position: "absolute",
+                      left: `${(m.layer / maxLayer) * 100}%`,
+                      transform: "translateX(-50%)",
+                      width: 3,
+                      height: 7,
+                      borderRadius: 1.5,
+                      background: m.color,
+                    }}
+                  />
+                ))}
+              </div>
+            ) : null}
+            <input
+              type="range"
+              min={1}
+              max={maxLayer}
+              value={layer}
+              onChange={(e) => onLayer(Number(e.target.value))}
+              aria-label="layer"
+              style={{ width: "100%", accentColor: "#3b82f6" }}
+            />
+          </div>
+          {markers.length ? (
+            <div style={{ marginTop: 8, display: "flex", flexWrap: "wrap", gap: "4px 12px", fontSize: "0.72rem" }}>
+              {markers.map((m, i) => (
+                <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ width: 9, height: 9, borderRadius: 2, background: m.color, flexShrink: 0 }} />
+                  <span style={{ color: "#c3cede" }}>
+                    L{m.layer} → {m.label}
+                  </span>
+                </span>
+              ))}
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

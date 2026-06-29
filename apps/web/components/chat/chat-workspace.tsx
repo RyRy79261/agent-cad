@@ -8,10 +8,13 @@ import * as api from "@/lib/api";
 import {
   buildSliceSettings,
   checkpointDefaults,
+  checkpointLabel,
   checkpointSeed,
+  CHECKPOINT_COLORS,
   currentStlUrl,
   isDirty,
   latestArtifact,
+  sliceCheckpointsFrom,
   sliceStatsFrom,
   versioned,
 } from "@/lib/chat";
@@ -456,6 +459,13 @@ export function ChatWorkspace() {
   const gcodeRef = latestArtifact(active, "gcode");
   const gcodeUrl = gcodeRef ? versioned(api.assetUrl(gcodeRef.url), active) : null;
   const stats = sliceStatsFrom(gcodeRef);
+  // Checkpoints actually baked into this slice (from slice_info) → coloured timeline markers.
+  const gcodeCheckpoints = sliceCheckpointsFrom(gcodeRef).map((cp, i) => ({
+    layer: cp.from_layer ?? null,
+    pct: cp.from_pct ?? null,
+    label: checkpointLabel(cp),
+    color: CHECKPOINT_COLORS[i % CHECKPOINT_COLORS.length] ?? "#3b82f6",
+  }));
   const status = active?.status ?? "new";
   // True while a server-side job for THIS chat is running — whether we started it this session
   // or re-attached to one we navigated back to (so the composer stays disabled + busy shows).
@@ -757,6 +767,7 @@ export function ChatWorkspace() {
               generating={generating}
               slicing={slicing}
               checkpointCount={checkpoints.length}
+              gcodeCheckpoints={gcodeCheckpoints}
               onAddCheckpointAtLayer={(layer) => {
                 setCheckpoints((c) => [
                   ...c,

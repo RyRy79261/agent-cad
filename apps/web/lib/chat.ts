@@ -117,6 +117,28 @@ export function checkpointSeed(
   return settings;
 }
 
+/** The checkpoints actually baked into a sliced g-code artifact (persisted in slice_info). */
+export function sliceCheckpointsFrom(ref: ArtifactRef | null): Checkpoint[] {
+  const info = ref?.slice_info as { checkpoints?: { requested?: Checkpoint[] } } | undefined;
+  return info?.checkpoints?.requested ?? [];
+}
+
+/** Short summary of what a checkpoint changes, e.g. "200°C · fan 100% · 60% speed". */
+export function checkpointLabel(cp: Checkpoint): string {
+  const parts: string[] = [];
+  if (cp.nozzle_temp != null) parts.push(`${cp.nozzle_temp}°C`);
+  if (cp.bed_temp != null) parts.push(`bed ${cp.bed_temp}°C`);
+  if (cp.fan_percent != null) parts.push(`fan ${cp.fan_percent}%`);
+  if (cp.flow_percent != null) parts.push(`flow ${cp.flow_percent}%`);
+  if (cp.speed_percent != null) parts.push(`${cp.speed_percent}% speed`);
+  if (cp.jerk != null) parts.push(`jerk ${cp.jerk}`);
+  if (cp.accel != null) parts.push(`accel ${cp.accel}`);
+  return parts.join(" · ") || "no change";
+}
+
+/** Distinct marker colours for checkpoints, by index (cycles). */
+export const CHECKPOINT_COLORS = ["#f59e0b", "#22d3ee", "#a78bfa", "#ec4899", "#34d399", "#fb7185"];
+
 /** Shallow value-equality of two SliceSettings-shaped maps (ignores `raw`, treats null≈absent). */
 export function sameSettings(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
   const keys = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})]);

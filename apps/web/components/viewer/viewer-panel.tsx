@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import type { BuildVolume } from "@agent-cad/types";
+import type { GcodeCheckpointMarker } from "@agent-cad/viewer";
 import { Box, Layers, Flag, Maximize2, RotateCcw, Printer as PrinterIcon, AlertTriangle, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -31,6 +32,8 @@ export interface ViewerPanelProps {
   checkpointCount?: number;
   /** Add a checkpoint at a layer picked in the Slice Preview. */
   onAddCheckpointAtLayer?: (layer: number) => void;
+  /** Checkpoints baked into the current slice — shown as markers on the Slice Preview timeline. */
+  gcodeCheckpoints?: GcodeCheckpointMarker[];
   className?: string;
 }
 
@@ -100,6 +103,7 @@ export function ViewerPanel({
   checkpointsSlot,
   checkpointCount,
   onAddCheckpointAtLayer,
+  gcodeCheckpoints,
   className,
 }: ViewerPanelProps) {
   const [fitKey, setFitKey] = useState(0);
@@ -199,6 +203,7 @@ export function ViewerPanel({
                   url={gcodeUrl}
                   buildVolume={buildVolume}
                   onAddCheckpoint={onAddCheckpointAtLayer}
+                  checkpoints={gcodeCheckpoints}
                 />
               ) : (
                 <Placeholder icon={Layers} title="No slice yet" hint="Slice the model to preview toolpaths." />
