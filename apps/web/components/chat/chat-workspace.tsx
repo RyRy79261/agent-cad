@@ -7,6 +7,7 @@ import { AlertCircle, Upload, Hammer, SquarePen, PanelRight, MoreHorizontal, Box
 import * as api from "@/lib/api";
 import {
   buildSliceSettings,
+  checkpointDefaults,
   currentStlUrl,
   isDirty,
   latestArtifact,
@@ -756,13 +757,14 @@ export function ChatWorkspace() {
               slicing={slicing}
               checkpointCount={checkpoints.length}
               onAddCheckpointAtLayer={(layer) => {
-                setCheckpoints((c) => [...c, { from_layer: layer, fan_percent: 100 }]);
+                setCheckpoints((c) => [...c, { from_layer: layer, ...checkpointDefaults(descriptor, sliceValues) }]);
                 setTab("checkpoints");
               }}
               checkpointsSlot={
                 <CheckpointEditor
                   checkpoints={checkpoints}
                   onChange={setCheckpoints}
+                  newDefaults={checkpointDefaults(descriptor, sliceValues)}
                   disabled={!stlUrl}
                 />
               }

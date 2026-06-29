@@ -1,5 +1,5 @@
 /** Pure helpers that derive UI state from a Chat record (artifacts, stats, status). */
-import type { ArtifactRef, Chat, SettingsDescriptor, SliceSettings } from "@agent-cad/types";
+import type { ArtifactRef, Chat, Checkpoint, SettingsDescriptor, SliceSettings } from "@agent-cad/types";
 
 import { assetUrl } from "./api";
 
@@ -71,6 +71,33 @@ export function buildSliceSettings(
     if (v !== undefined && v !== null && v !== "") body[f.key] = v;
   }
   return body as SliceSettings;
+}
+
+/**
+ * The current effective values for a new checkpoint — the print's base settings (descriptor
+ * defaults overlaid with the user's per-slice overrides). A checkpoint seeds from these so you
+ * tweak from real numbers instead of blanks. fan/accel aren't in the slice settings (no known
+ * base), so they stay blank = unchanged.
+ */
+export function checkpointDefaults(
+  descriptor: SettingsDescriptor | null,
+  values: Record<string, unknown>,
+): Partial<Checkpoint> {
+  const eff = (key: string): unknown => {
+    const v = values[key];
+    if (v != null && v !== "") return v;
+    return descriptor?.fields.find((f) => f.key === key)?.default;
+  };
+  const out: Record<string, unknown> = { speed_percent: 100 };
+  const nozzle = eff("nozzle_temp");
+  if (typeof nozzle === "number") out.nozzle_temp = nozzle;
+  const bed = eff("bed_temp");
+  if (typeof bed === "number") out.bed_temp = bed;
+  const flow = eff("flow");
+  if (typeof flow === "number") out.flow_percent = Math.round(flow * 100);
+  const jerk = eff("jerk");
+  if (typeof jerk === "number") out.jerk = jerk;
+  return out as Partial<Checkpoint>;
 }
 
 /** Shallow value-equality of two SliceSettings-shaped maps (ignores `raw`, treats null≈absent). */

@@ -23,6 +23,8 @@ const FIELDS: { key: keyof Checkpoint; label: string; unit: string; min: number;
 export interface CheckpointEditorProps {
   checkpoints: Checkpoint[];
   onChange: (checkpoints: Checkpoint[]) => void;
+  /** Current print settings a new checkpoint seeds from (so it starts filled, not blank). */
+  newDefaults?: Partial<Checkpoint>;
   /** Model height (mm), if known — used to show the ≈mm of each % checkpoint. */
   modelHeightMm?: number | null;
   disabled?: boolean;
@@ -32,11 +34,17 @@ export interface CheckpointEditorProps {
  * Edit the slice checkpoints — "from this height up, use these settings". Stack several to ramp
  * settings up the print. Lives in its own viewer tab next to Slice Preview.
  */
-export function CheckpointEditor({ checkpoints, onChange, modelHeightMm, disabled }: CheckpointEditorProps) {
+export function CheckpointEditor({
+  checkpoints,
+  onChange,
+  newDefaults,
+  modelHeightMm,
+  disabled,
+}: CheckpointEditorProps) {
   const update = (i: number, patch: Partial<Checkpoint>) =>
     onChange(checkpoints.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   const remove = (i: number) => onChange(checkpoints.filter((_, j) => j !== i));
-  const add = () => onChange([...checkpoints, { from_pct: 80, fan_percent: 100 } as Checkpoint]);
+  const add = () => onChange([...checkpoints, { from_pct: 80, ...newDefaults } as Checkpoint]);
   const num = (e: React.ChangeEvent<HTMLInputElement>) =>
     e.target.value === "" ? undefined : Number(e.target.value);
 
