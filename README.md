@@ -21,24 +21,46 @@ Every build is checked against the target printer's envelope: the runner reports
 210 × 210 after a 5 mm margin)** and the `cad` CLI warns when a part overruns the
 bed — so an oversized part is caught at design time, not on the print bed.
 
-## Quickstart
+## Run the app
+
+The full chat app: describe a part in plain language, watch it design (live), preview the 3D
+model, slice it, and copy g-code to an SD card.
 
 ```bash
-# Python engine (build123d, slicer, scanner, FastAPI) — one uv workspace
-uv sync --all-packages
-uv run pytest                      # 34 tests
+# 1. One-time: install dependencies (Python engine + JS control plane)
+uv sync --all-packages      # build123d, slicer, scanner, FastAPI (a uv workspace)
+pnpm install                # Next.js web + shared packages (pnpm + Turborepo)
 
-# JS control plane (pnpm + Turborepo)
-pnpm install
-pnpm turbo run build typecheck     # all packages
+# 2. Start everything — API (:8420) + web (:3420) together, opens your browser
+pnpm start
+```
 
-# Build the example part: model.py -> STL/STEP/3MF/SVG
+Then open **http://localhost:3420**. `Ctrl-C` stops both servers. If a port is busy, free it
+first (`pkill -f next-server; pkill -f "uvicorn api.main"`).
+
+**Prerequisites** (details in [docs/prerequisites.md](docs/prerequisites.md)):
+
+- **[Claude Code CLI](https://claude.com/claude-code)** — the `claude` binary on your `PATH`.
+  Free-text → CAD runs on your existing Claude **subscription**; **no metered API key needed**.
+- **OrcaSlicer** — for slicing. Auto-detected at `~/Applications/OrcaSlicer.AppImage` (or set
+  `$ORCA_SLICER_BIN`); on a headless Linux box it's wrapped in `xvfb-run` automatically.
+- **Python 3.11+** (managed by `uv`) and **Node ≥ 22** with **pnpm ≥ 10**.
+
+Your data — chats, printers, filaments, settings, generated artifacts — lives under
+`~/.agent-cad/` and is created on first run.
+
+## Developing / CLI
+
+```bash
+uv run pytest                       # Python test suite
+pnpm turbo run build typecheck      # all JS packages
+
+# Build a part directly: model.py -> STL/STEP/3MF/SVG
 uv run --package cad cad build \
   projects/fridge_drawer/model.py \
   --params projects/fridge_drawer/params.json
 
-# Run the local API (control plane for the web app / CLI)
-pnpm py:api                        # uvicorn on http://127.0.0.1:8000
+pnpm py:api                         # run just the API (:8420); the web app talks to it
 ```
 
 ## The agent loop

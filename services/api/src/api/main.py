@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import re
 import uuid
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
@@ -414,7 +415,8 @@ def _run_slice_inline(stl: Path, out_dir: Path, url_prefix: str, settings: Slice
         slice_overrides,
     )
 
-    typed = settings.model_dump(exclude={"raw"}, exclude_none=True)
+    # `checkpoints` are post-slice g-code edits, not OrcaSlicer keys — keep them out of the overrides.
+    typed = settings.model_dump(exclude={"raw", "checkpoints"}, exclude_none=True)
     raw = settings.raw or {}
     archive = out_dir / f"{stl.stem}.gcode.3mf"
     profiles = ender5s1_profiles()
@@ -438,6 +440,11 @@ def _run_slice_inline(stl: Path, out_dir: Path, url_prefix: str, settings: Slice
     result["override_warnings"] = warnings
     gpath = result.get("gcode_path")
     if result.get("ok") and gpath:
+        if settings.checkpoints:
+            from slicer.postprocess import apply_checkpoints
+
+            cps = [c.model_dump() for c in settings.checkpoints]
+            result["checkpoints"] = {"applied": apply_checkpoints(gpath, cps), "requested": cps}
         result["gcode_url"] = f"{url_prefix}/{Path(gpath).name}"
         layers = count_gcode_layers(gpath)
         if layers is not None:
@@ -583,13 +590,19 @@ def _update_chat_after_slice(chat_id: str, result: dict, gpath: object) -> None:
     if result.get("ok") and gpath:
         gname = Path(str(gpath)).name
         chat.status = "ready-to-print"
+        # Carry the per-height checkpoints baked into THIS g-code so the UI can show them on the
+        # slice (it can't trust the live editor state, which may have changed since slicing).
+        info = result.get("info")
+        cps = result.get("checkpoints")
+        if cps:
+            info = {**(info or {}), "checkpoints": cps}
         refs = [
             ArtifactRef(
                 kind="gcode",
                 name=gname,
                 fmt="gcode",
                 url=f"/chats/{chat_id}/artifacts/{gname}",
-                slice_info=result.get("info"),
+                slice_info=info,
             )
         ]
     else:
@@ -748,8 +761,11 @@ def chat_generate(chat_id: str, body: ChatGenerateIn) -> JobRef:
     # claude-code driver (the user's Claude subscription, no metered API key); model + effort
     # come from settings and are passed EXPLICITLY so generation doesn't inherit a stray
     # CLAUDE_EFFORT from the launching shell.
-    def work() -> dict:
-        return _generate_build(chat_id, art_dir, prompt, model=sel_model, effort=sel_effort, attachments=ref_paths)
+    def work(report: Callable[[str], None]) -> dict:
+        return _generate_build(
+            chat_id, art_dir, prompt, model=sel_model, effort=sel_effort,
+            attachments=ref_paths, on_progress=report,
+        )
 
     job = jobs.submit("cad.generate", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
@@ -771,29 +787,39 @@ def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
     sel_model, sel_effort = _settings.active_model, _settings.effort
     ref_paths, ref_note = reference_attachments(store, chat)  # references attached pre-generation
 
-    def work() -> dict:
+    def work(report: Callable[[str], None]) -> dict:
         import time
 
         from api.interview import interview_turn
 
         # claude-code (subscription); model + effort from settings, passed explicitly.
         # Reference renders are passed so the interview can SEE an STL and engage about it.
+        report("Reading your description")
         t0 = time.monotonic()
-        result = interview_turn(brief, attachments=ref_paths, ref_note=ref_note, model=sel_model, effort=sel_effort)
+        result = interview_turn(
+            brief, first_turn=(rounds == 0), attachments=ref_paths, ref_note=ref_note,
+            model=sel_model, effort=sel_effort,
+        )
         dur_ms = (time.monotonic() - t0) * 1000
-        ready = result.get("status") != "question" or rounds >= 6  # cap at 6 questions
-        if not ready:
+        interp = result.get("interpretation")
+        has_q = result.get("status") == "question"
+        # The first turn ALWAYS pauses so the user can review the agent's interpretation of the
+        # shape before it asks/builds; later turns pause only for a real question (capped at 6).
+        pause = (has_q or (rounds == 0 and bool(interp))) and rounds < 6
+        if pause:
+            question = result.get("question") or "Shall I build it as described, or change anything?"
+            suggestions = result.get("suggestions") or ([] if has_q else ["Build it as described"])
+            body = f"{interp}\n\n{question}" if interp else question
             append_message(
-                store, chat_id, "assistant", result["question"],
-                quick_replies=result.get("suggestions") or [],
+                store, chat_id, "assistant", body,
+                quick_replies=suggestions,
                 usage=result.get("usage"), duration_ms=dur_ms,
             )
             c2 = get_chat(store, chat_id)
             if c2 is not None:
                 c2.status = "interviewing"
                 save_chat(store, c2)
-            return {"ok": True, "ready": False, "question": result.get("question"),
-                    "suggestions": result.get("suggestions")}
+            return {"ok": True, "ready": False, "question": question, "suggestions": suggestions}
         # Ready → generate INLINE in this same job. The user's brief is already on the thread
         # (appended above), so we don't re-post it — this is what fixed the duplicate message.
         c = get_chat(store, chat_id)
@@ -801,14 +827,15 @@ def chat_interview(chat_id: str, body: ChatInterviewIn) -> JobRef:
             c.status = "generating"
             save_chat(store, c)
         return _generate_build(chat_id, art_dir, brief + ref_note, model=sel_model, effort=sel_effort,
-                               attachments=ref_paths)
+                               attachments=ref_paths, on_progress=report)
 
     job = jobs.submit("chat.interview", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
 
 
 def _generate_build(
-    chat_id: str, art_dir: Path, prompt: str, *, model: str | None, effort: str | None, attachments: list[str]
+    chat_id: str, art_dir: Path, prompt: str, *, model: str | None, effort: str | None,
+    attachments: list[str], on_progress: Callable[[str], None] | None = None,
 ) -> dict:
     """Generate a fresh model into the chat and post the result. The user's message must already
     be on the thread — this does NOT append it (avoids the interview→generate double-post)."""
@@ -819,7 +846,7 @@ def _generate_build(
     t0 = time.monotonic()
     result = generate_part(
         prompt, art_dir, model=model, effort=effort, attachments=attachments, max_rounds=2,
-        verify=True, name="model", out_dir=str(art_dir),
+        verify=True, name="model", out_dir=str(art_dir), on_progress=on_progress,
     )
     return _attach_build_to_chat(chat_id, result, duration_ms=(time.monotonic() - t0) * 1000)
 
@@ -843,6 +870,7 @@ def _refine_build(
     effort: str | None,
     attachments: list[str],
     ref_note: str,
+    on_progress: Callable[[str], None] | None = None,
 ) -> dict:
     """Surgically edit the chat's current model.py and post the result. Snapshots the prior
     version (artifacts/history/model.v<N>.py) so nothing is lost."""
@@ -881,7 +909,7 @@ def _refine_build(
     )
     result = generate_part(
         augmented, art_dir, model=model, effort=effort, attachments=attachments, max_rounds=2,
-        verify=True, name="model", out_dir=str(art_dir),
+        verify=True, name="model", out_dir=str(art_dir), on_progress=on_progress,
     )
     return _attach_build_to_chat(chat_id, result, duration_ms=(time.monotonic() - t0) * 1000)
 
@@ -903,11 +931,12 @@ def chat_respond(chat_id: str, body: ChatRefineIn) -> JobRef:
     sel_model, sel_effort = _settings.active_model, _settings.effort
     ref_paths, ref_note = reference_attachments(store, chat)
 
-    def work() -> dict:
+    def work(report: Callable[[str], None]) -> dict:
         import time
 
         from api.interview import respond_turn
 
+        report("Reading your message")
         t0 = time.monotonic()
         decision = respond_turn(message, summary, model=sel_model, effort=sel_effort)
         if decision.get("action") == "edit":
@@ -919,6 +948,7 @@ def chat_respond(chat_id: str, body: ChatRefineIn) -> JobRef:
             return _refine_build(
                 chat_id, art_dir, decision.get("instruction") or message,
                 model=sel_model, effort=sel_effort, attachments=ref_paths, ref_note=ref_note,
+                on_progress=report,
             )
         # Conversational turn — reply in words, no regeneration.
         append_message(
@@ -950,49 +980,102 @@ def chat_refine(chat_id: str, body: ChatRefineIn) -> JobRef:
     sel_model, sel_effort = _settings.active_model, _settings.effort
     ref_paths, ref_note = reference_attachments(store, chat)  # pinned image/STL references
 
-    def work() -> dict:
+    def work(report: Callable[[str], None]) -> dict:
         return _refine_build(
             chat_id, art_dir, instruction, model=sel_model, effort=sel_effort,
-            attachments=ref_paths, ref_note=ref_note,
+            attachments=ref_paths, ref_note=ref_note, on_progress=report,
         )
 
     job = jobs.submit("cad.refine", work, chat_id=chat_id)
     return JobRef(job_id=job.id, kind=job.kind, status=job.status.value)
 
 
-@app.post("/chats/{chat_id}/imports/{import_id}/attach", response_model=Chat, tags=["chats"])
-def attach_import(chat_id: str, import_id: str) -> Chat:
-    """Attach a previously-uploaded STL into a chat as its current model."""
-    chat = get_chat(store, chat_id)
-    if chat is None:
-        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
-    src = store.imports_dir / f"{import_id}.stl"
-    if not src.exists():
-        raise HTTPException(status_code=404, detail=f"unknown import: {import_id}")
-    import shutil
-
+def _stl_bbox_fit(stl_path: Path) -> tuple[dict, bool]:
+    """(bbox dict, fits_bed) for a produced model.stl."""
     import trimesh
     from cad.printer import fits
 
-    art_dir = store.artifacts_dir(chat_id)
-    art_dir.mkdir(parents=True, exist_ok=True)
-    dst = art_dir / "model.stl"
-    shutil.copyfile(src, dst)
-    mesh = trimesh.load(dst, force="mesh")
+    mesh = trimesh.load(stl_path, force="mesh")
     ext = [float(v) for v in mesh.extents]
     fit = fits({"x": ext[0], "y": ext[1], "z": ext[2]})
-    bbox = {"x": round(ext[0], 2), "y": round(ext[1], 2), "z": round(ext[2], 2)}
+    return {"x": round(ext[0], 2), "y": round(ext[1], 2), "z": round(ext[2], 2)}, fit.fits
+
+
+@app.post("/chats/{chat_id}/imports/{import_id}/attach", response_model=Chat, tags=["chats"])
+def attach_import(chat_id: str, import_id: str) -> Chat:
+    """Attach an uploaded model into a chat. An **STL** becomes a (non-editable) mesh model; a
+    **STEP/BREP** becomes an **editable** model — we scaffold a build123d wrapper that imports it,
+    so the chat can modify the real geometry instead of doing a lossy rebuild."""
+    import shutil
+
+    from cad.imports import classify, scaffold_source
+
+    chat = get_chat(store, chat_id)
+    if chat is None:
+        raise HTTPException(status_code=404, detail=f"Unknown chat: {chat_id}")
+    src = next(store.imports_dir.glob(f"{import_id}.*"), None)
+    if src is None:
+        raise HTTPException(status_code=404, detail=f"unknown import: {import_id}")
+    art_dir = store.artifacts_dir(chat_id)
+    art_dir.mkdir(parents=True, exist_ok=True)
+    fmt = src.suffix.lower().lstrip(".")
+
+    if classify(src.name) == "editable":
+        from cad.runner import build_model
+
+        ref_name = f"reference{src.suffix.lower()}"
+        shutil.copyfile(src, art_dir / ref_name)
+        (art_dir / "model.py").write_text(scaffold_source(ref_name), encoding="utf-8")
+        result = build_model(art_dir / "model.py", {}, out_dir=art_dir, name="model", formats=("stl", "step"))
+        chat = get_chat(store, chat_id)
+        assert chat is not None
+        if not result.ok or not (art_dir / "model.stl").exists():
+            # Don't downgrade an existing chat on a bad import — leave its status/artifacts intact
+            # and just report the failure.
+            tail = (result.error or "could not read the file").strip().splitlines()[-1][:200]
+            append_message(
+                store, chat_id, "assistant",
+                f"I couldn't open that {fmt.upper()} as an editable model — {tail}",
+            )
+            out = get_chat(store, chat_id)
+            assert out is not None
+            return out
+        bbox, fits_bed = _stl_bbox_fit(art_dir / "model.stl")
+        chat.current_stl = "model.stl"
+        chat.status = "model-ready"
+        save_chat(store, chat)
+        fit_msg = "Fits the bed." if fits_bed else "⚠ Doesn't fit the bed as-is."
+        ref = ArtifactRef(
+            kind="import", name="model.stl", fmt="stl",
+            url=f"/chats/{chat_id}/artifacts/model.stl", bbox=bbox, fits_build_volume=fits_bed,
+        )
+        append_message(
+            store, chat_id, "assistant",
+            f"Imported your **.{fmt}** as an editable model — {bbox['x']:.0f}×{bbox['y']:.0f}×{bbox['z']:.0f} mm. "
+            f"{fit_msg} This is the real geometry (not a mesh), so just tell me what to add, cut, or resize "
+            "and I'll edit the original design.",
+            artifact_refs=[ref],
+        )
+        out = get_chat(store, chat_id)
+        assert out is not None
+        return out
+
+    # Mesh (STL): viewable + printable, but no editable source.
+    shutil.copyfile(src, art_dir / "model.stl")
+    bbox, fits_bed = _stl_bbox_fit(art_dir / "model.stl")
     chat.current_stl = "model.stl"
     chat.status = "model-ready"
     save_chat(store, chat)
-    fit_msg = "Fits the bed." if fit.fits else "⚠ Doesn't fit the bed as-is."
+    fit_msg = "Fits the bed." if fits_bed else "⚠ Doesn't fit the bed as-is."
     ref = ArtifactRef(
         kind="import", name="model.stl", fmt="stl",
-        url=f"/chats/{chat_id}/artifacts/model.stl", bbox=bbox, fits_build_volume=fit.fits,
+        url=f"/chats/{chat_id}/artifacts/model.stl", bbox=bbox, fits_build_volume=fits_bed,
     )
     append_message(
         store, chat_id, "assistant",
-        f"Imported model — {bbox['x']:.0f}×{bbox['y']:.0f}×{bbox['z']:.0f} mm. {fit_msg}",
+        f"Imported your **.{fmt}** — {bbox['x']:.0f}×{bbox['y']:.0f}×{bbox['z']:.0f} mm. {fit_msg} "
+        "Heads up: an STL is a mesh, so I can show and slice it but can't *edit* it. To modify a design, "
+        "import a **STEP (.step)** file instead and I can change the real geometry.",
         artifact_refs=[ref],
     )
     result = get_chat(store, chat_id)
@@ -1020,15 +1103,23 @@ def chat_slice(chat_id: str, body: ChatSliceIn | None = None) -> JobRef:
 # STL import + calibration test prints                                        #
 # --------------------------------------------------------------------------- #
 @app.post("/imports", tags=["imports"])
-async def import_stl(file: Annotated[UploadFile, File()]) -> dict:
-    """Upload + validate an STL (trimesh), store it under ~/.agent-cad/imports/<id>.stl."""
-    import trimesh
+async def import_model(file: Annotated[UploadFile, File()]) -> dict:
+    """Upload + validate a model, stored under ~/.agent-cad/imports/<id><ext>.
+
+    **STL** (a mesh — view/print only) or **STEP/BREP** (editable B-rep geometry). Unsupported
+    formats (``.f3d``, ``.iges``, …) are rejected with a pointer to export STEP."""
+    from cad.imports import cad_bbox, classify, unsupported_reason
     from cad.printer import fits
+
+    name = Path(file.filename or "import.stl").name
+    ext = Path(name).suffix.lower()
+    kind = classify(name)
+    if kind == "unsupported":
+        raise HTTPException(status_code=415, detail=unsupported_reason(name))
 
     store.imports_dir.mkdir(parents=True, exist_ok=True)
     import_id = uuid.uuid4().hex[:12]
-    name = Path(file.filename or "import.stl").name
-    dst = store.imports_dir / f"{import_id}.stl"
+    dst = store.imports_dir / f"{import_id}{ext}"
     max_bytes = 100 * 1024 * 1024  # 100 MB cap, streamed to disk (no full-payload in RAM)
     size, too_big = 0, False
     with dst.open("wb") as out:
@@ -1040,23 +1131,38 @@ async def import_stl(file: Annotated[UploadFile, File()]) -> dict:
             out.write(chunk)
     if too_big:
         dst.unlink(missing_ok=True)
-        raise HTTPException(status_code=413, detail="STL too large (max 100 MB)")
-    try:
-        mesh = trimesh.load(dst, force="mesh")
-        ext = [float(v) for v in mesh.extents]
-    except Exception as exc:  # noqa: BLE001 - reject anything trimesh can't load as a mesh
+        raise HTTPException(status_code=413, detail="file too large (max 100 MB)")
+
+    if kind == "mesh":
+        import trimesh
+
+        try:
+            mesh = trimesh.load(dst, force="mesh")
+            extents = [float(v) for v in mesh.extents]
+        except Exception as exc:  # noqa: BLE001 - reject anything trimesh can't load as a mesh
+            dst.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=f"not a loadable STL mesh: {exc}") from exc
+        watertight = bool(mesh.is_watertight)
+    else:  # editable STEP / BREP
+        try:
+            extents, vol = cad_bbox(dst)
+        except Exception as exc:  # noqa: BLE001 - reject anything build123d can't read
+            dst.unlink(missing_ok=True)
+            raise HTTPException(status_code=400, detail=f"could not read this CAD file: {exc}") from exc
+        # A closed solid has positive volume; an open shell/surface reads ~0 — don't claim those
+        # are printable solids.
+        watertight = vol > 0
+    if min(extents) <= 0:
         dst.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail=f"not a loadable STL mesh: {exc}") from exc
-    if min(ext) <= 0:
-        dst.unlink(missing_ok=True)
-        raise HTTPException(status_code=400, detail="degenerate mesh (zero extent)")
-    fit = fits({"x": ext[0], "y": ext[1], "z": ext[2]})
+        raise HTTPException(status_code=400, detail="degenerate geometry (zero extent)")
+    fit = fits({"x": extents[0], "y": extents[1], "z": extents[2]})
     return {
         "id": import_id,
         "name": name,
-        "bbox": {"x": round(ext[0], 2), "y": round(ext[1], 2), "z": round(ext[2], 2)},
+        "bbox": {"x": round(extents[0], 2), "y": round(extents[1], 2), "z": round(extents[2], 2)},
         "fits_build_volume": fit.fits,
-        "watertight": bool(mesh.is_watertight),
+        "watertight": watertight,
+        "editable": kind == "editable",
     }
 
 

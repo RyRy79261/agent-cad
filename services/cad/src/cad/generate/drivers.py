@@ -12,13 +12,17 @@ Three interchangeable drivers, selected by name (``$AGENT_CAD_LLM_DRIVER`` or th
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import queue
 import shutil
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 from cad.generate.base import Driver, Message
@@ -67,6 +71,11 @@ class ClaudeCodeDriver:
         self.effort = effort
         self.bin = os.environ.get("AGENT_CAD_CLAUDE_BIN", "claude")
         self.timeout = int(os.environ.get("AGENT_CAD_CLAUDE_TIMEOUT", "600"))
+        # Advisor strategy (beta): pair a fast executor (e.g. sonnet via `model`) with an
+        # on-demand advisor (e.g. "opus") for ~Opus quality at ~Sonnet speed/cost. Off by
+        # default; set AGENT_CAD_CLAUDE_ADVISOR=opus to enable. Headless `-p` honours the
+        # `advisorModel` setting (verified). See docs / model selector (UI toggle TBD).
+        self.advisor = os.environ.get("AGENT_CAD_CLAUDE_ADVISOR") or None
         self.last_usage: dict[str, int] | None = None  # token usage of the most recent call
 
     def available(self) -> tuple[bool, str]:
@@ -77,12 +86,15 @@ class ClaudeCodeDriver:
             )
         return True, ""
 
-    def complete(self, system: str, messages: list[Message]) -> str:
+    def complete(
+        self, system: str, messages: list[Message], on_progress: Callable[[str], None] | None = None
+    ) -> str:
         # The CLI is single-prompt; fold the running conversation into one turn so
         # retries carry the prior model.py + the error feedback.
         prompt = _flatten_conversation(messages)
         images = [a for m in messages for a in (m.attachments or ())]
-        cmd = [self.bin, "-p", prompt, "--system-prompt", system, "--output-format", "json"]
+        # Shared command (the --output-format flag is added per run-mode below).
+        cmd = [self.bin, "-p", prompt, "--system-prompt", system]
         if images:
             # Reference image(s) attached (a sketch, an STL render). Point the model at
             # them and allow ONLY the Read tool — scoped to their dirs — so it can view
@@ -100,37 +112,113 @@ class ClaudeCodeDriver:
             cmd += ["--model", self.model]
         if self.effort:
             cmd += ["--effort", self.effort]
+        if self.advisor:
+            # Sonnet/Haiku executor + an on-demand Opus advisor (beta) — best-of-both.
+            cmd += ["--settings", json.dumps({"advisorModel": self.advisor})]
         # Retry transient API failures (the CLI surfaces "Connection closed … Try again",
         # overloaded/429/529, timeouts on long high-effort runs) — they're flaky, not fatal.
         retries = int(os.environ.get("AGENT_CAD_CLAUDE_RETRIES", "3"))
         last = "no output"
         for attempt in range(retries):
-            # Force UTF-8 (don't trust the process locale): the CLI emits JSON whose
-            # `result` echoes model.py, routinely containing non-ASCII (em-dashes, →, °).
-            # `text=True` alone would decode with the locale encoding — ASCII on a bare
-            # locale — and crash with UnicodeDecodeError. `errors="replace"` is a backstop.
-            proc = subprocess.run(  # noqa: S603 - args are controlled, not shell-interpolated
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=self.timeout,
-            )
-            # The CLI emits a JSON envelope even on error (--output-format json).
-            try:
-                payload = json.loads(proc.stdout) if proc.stdout.strip() else {}
-            except json.JSONDecodeError:
-                payload = {}
-            if proc.returncode == 0 and payload and not payload.get("is_error"):
+            rc, payload = -1, None
+            if on_progress is not None:
+                # Stream the run so the UI can show live "thinking…/writing…" activity.
+                rc, payload = self._run_streaming(cmd, on_progress)
+            if payload is None:  # no progress wanted, or a stream hiccup → proven blocking path
+                rc, payload = self._run_blocking(cmd)
+            if rc == 0 and payload and not payload.get("is_error"):
                 self.last_usage = _usage_from(payload)
                 return payload["result"]
-            last = str(payload.get("result") or proc.stderr or proc.stdout or "").strip()[:500]
+            last = str((payload or {}).get("result") or "").strip()[:500] or "claude CLI error"
             if attempt < retries - 1 and _is_retryable(last):
                 time.sleep(3 * (attempt + 1))  # brief backoff; transient drops clear fast
                 continue
             break
         raise RuntimeError(f"claude CLI error: {last}")
+
+    def _run_blocking(self, cmd: list[str]) -> tuple[int, dict]:
+        """The proven single-shot path: ``--output-format json`` → (returncode, parsed payload)."""
+        # Force UTF-8 (don't trust the process locale): the CLI's JSON `result` echoes model.py,
+        # routinely containing non-ASCII (em-dashes, →, °); `errors="replace"` is a backstop.
+        proc = subprocess.run(  # noqa: S603 - args are controlled, not shell-interpolated
+            [*cmd, "--output-format", "json"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=self.timeout,
+        )
+        try:
+            payload = json.loads(proc.stdout) if proc.stdout.strip() else {}
+        except json.JSONDecodeError:
+            payload = {}
+        return proc.returncode, payload
+
+    def _run_streaming(self, cmd: list[str], on_progress: Callable[[str], None]) -> tuple[int, dict | None]:
+        """Stream the run (``--output-format stream-json``), reporting live thinking/writing
+        activity, and return ``(returncode, result_payload)``. On ANY stream hiccup returns
+        ``(rc, None)`` so the caller falls back to the proven blocking path — streaming must
+        never be able to break a generation."""
+        full = [*cmd, "--output-format", "stream-json", "--verbose", "--include-partial-messages"]
+        try:
+            proc = subprocess.Popen(  # noqa: S603 - args are controlled, not shell-interpolated
+                full, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                text=True, encoding="utf-8", errors="replace",
+            )
+        except OSError:
+            return 1, None
+        result_payload: dict | None = None
+        block_type, chars, last_report = "text", 0, 0.0
+        deadline = time.monotonic() + self.timeout
+        # Read stdout on a thread so a stalled-but-alive CLI can't block us past the deadline
+        # (a plain `for line in proc.stdout` only re-checks the deadline when a line arrives).
+        lines: queue.Queue = queue.Queue()
+
+        def _pump(stream: object) -> None:
+            try:
+                for ln in stream or ():  # type: ignore[union-attr]
+                    lines.put(ln)
+            finally:
+                lines.put(None)  # EOF sentinel
+
+        threading.Thread(target=_pump, args=(proc.stdout,), daemon=True).start()
+        try:
+            while True:
+                if time.monotonic() > deadline:
+                    proc.kill()
+                    return 1, None
+                try:
+                    line = lines.get(timeout=0.5)
+                except queue.Empty:
+                    continue  # stdout stalled — re-check the deadline instead of blocking forever
+                if line is None:
+                    break  # reader thread hit EOF
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    e = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                t = e.get("type")
+                if t == "result":
+                    result_payload = e
+                elif t == "stream_event":
+                    ev = e.get("event") or {}
+                    et = ev.get("type")
+                    if et == "content_block_start":
+                        block_type = (ev.get("content_block") or {}).get("type") or "text"
+                    elif et == "content_block_delta":
+                        d = ev.get("delta") or {}
+                        chars += len(d.get("text") or d.get("thinking") or "")
+                        now = time.monotonic()
+                        if now - last_report > 0.7:  # throttle UI churn
+                            last_report = now
+                            verb = "thinking" if block_type == "thinking" else "writing the model"
+                            with contextlib.suppress(Exception):
+                                on_progress(f"{verb}... ({chars:,} chars)")
+            proc.wait(timeout=15)
+        except Exception:  # noqa: BLE001 - any stream/parse error → fall back to blocking
+            with contextlib.suppress(Exception):
+                proc.kill()
+            return 1, None
+        return proc.returncode, result_payload  # None payload → caller falls back to blocking
 
 
 class AnthropicDriver:
@@ -152,7 +240,9 @@ class AnthropicDriver:
             return False, "set ANTHROPIC_API_KEY to use the metered Anthropic API driver."
         return True, ""
 
-    def complete(self, system: str, messages: list[Message]) -> str:
+    def complete(
+        self, system: str, messages: list[Message], on_progress: Callable[[str], None] | None = None
+    ) -> str:
         import anthropic
 
         client = anthropic.Anthropic()
@@ -192,7 +282,9 @@ class OllamaDriver:
         except (urllib.error.URLError, OSError) as exc:
             return False, f"no Ollama server reachable at {self.host} ({exc}). Run `ollama serve`."
 
-    def complete(self, system: str, messages: list[Message]) -> str:
+    def complete(
+        self, system: str, messages: list[Message], on_progress: Callable[[str], None] | None = None
+    ) -> str:
         body = json.dumps({
             "model": self.model,
             "system": system,

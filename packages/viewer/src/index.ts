@@ -14,6 +14,7 @@ export { StepViewer, type StepViewerProps } from "./StepViewer.js";
 export {
   GcodeViewer,
   type GcodeViewerProps,
+  type GcodeCheckpointMarker,
   DEFAULT_GCODE_BACKGROUND,
   DEFAULT_GCODE_EXTRUSION,
 } from "./GcodeViewer.js";

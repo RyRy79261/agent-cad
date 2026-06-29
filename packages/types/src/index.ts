@@ -153,6 +153,30 @@ export type PartSummary = z.infer<typeof PartSummary>;
  * min/max/options derive from here). `infill_pattern`/`seam_position` are enums on both
  * sides so the server rejects garbage.
  */
+/**
+ * Per-height setting changes applied after slicing — mirrors `Checkpoint`. From `from_pct`% of
+ * the model's height up, apply these (everything that can change mid-print via one g-code
+ * command). Stack several. Retraction/walls/infill can't change mid-print (need a re-slice).
+ */
+export const Checkpoint = z.object({
+  // Anchor on a % of the print height OR a specific layer (e.g. picked in the slice preview).
+  from_pct: z.number().min(0).max(100).nullish(),
+  from_layer: z.number().int().min(1).nullish(),
+  nozzle_temp: z.number().int().min(150).max(300).nullish(),
+  bed_temp: z.number().int().min(0).max(120).nullish(),
+  fan_percent: z.number().int().min(0).max(100).nullish(),
+  flow_percent: z.number().int().min(50).max(150).nullish(),
+  speed_percent: z.number().int().min(20).max(300).nullish(),
+  jerk: z.number().int().min(1).max(40).nullish(),
+  accel: z.number().int().min(100).max(10000).nullish(),
+  color: z.string().nullish(), // UI: the band colour in the slice preview
+}).refine((c) => c.from_pct != null || c.from_layer != null, {
+  // Mirror the backend: a checkpoint must anchor on a % or a layer — catch it client-side.
+  message: "a checkpoint needs from_pct or from_layer",
+  path: ["from_pct"],
+});
+export type Checkpoint = z.infer<typeof Checkpoint>;
+
 export const SliceSettings = z.object({
   infill_density: z.number().int().min(0).max(100).nullish(),
   wall_speed: z.number().int().min(5).max(120).nullish(),
@@ -170,6 +194,7 @@ export const SliceSettings = z.object({
   support: z.boolean().nullish(),
   support_threshold: z.number().int().min(0).max(90).nullish(),
   retraction_length: z.number().min(0).max(6).nullish(),
+  checkpoints: z.array(Checkpoint).nullish(),
   raw: z.record(z.string(), z.string()).nullish(),
 });
 export type SliceSettings = z.infer<typeof SliceSettings>;
@@ -311,6 +336,8 @@ export const ImportResult = z.object({
   bbox: z.object({ x: z.number(), y: z.number(), z: z.number() }),
   fits_build_volume: z.boolean(),
   watertight: z.boolean(),
+  /** STEP/BREP imports are editable (real B-rep); STL imports are mesh-only. */
+  editable: z.boolean().nullish(),
 });
 export type ImportResult = z.infer<typeof ImportResult>;
 

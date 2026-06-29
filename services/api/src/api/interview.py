@@ -15,18 +15,31 @@ from cad.generate.base import Message
 from cad.generate.drivers import resolve_driver
 
 _STL_Q_EXAMPLE = '{"status":"question","question":"I can\'t edit the STL itself — I\'ll rebuild it as parametric code from the views. I can see a ~138x51mm tray with two back brackets. Which features must I capture exactly?","suggestions":["the hex fittings","screw holes","just the overall shape"]}'  # noqa: E501
+_FIRST_Q_EXAMPLE = '{"status":"question","interpretation":"<professional restatement of the shape>","question":"<a clarification, or a build-confirmation>","suggestions":["<2-4 short answers>"]}'  # noqa: E501
 
 INTERVIEW_SYSTEM = (
     """\
-You are a CAD intake assistant. The user wants to 3D-print a part and gave a brief
-description. Decide if the brief has enough detail to design a printable part (rough
-dimensions, shape, key features). Reply with ONE LINE of strict JSON, no prose, no code
-fences:
-- If a single most-useful clarifying question would materially improve the design:
+You are a CAD intake assistant. The user wants to 3D-print a part and gave a brief, often
+amateur description. Reply with ONE LINE of strict JSON, no prose, no code fences.
+
+FIRST REPLY — always show your interpretation. On the user's INITIAL description (before any
+clarifying exchange), reply with status "question" and include an "interpretation": a precise,
+professional restatement of the SHAPE — translate their casual words into clear CAD terms (the
+overall form, the key features, and the rough proportions / dimensions you're assuming), 1-3
+sentences, so they can catch a misread early. Then set "question" to the single most-useful
+clarification, OR — if the brief is already complete enough to build — to a build confirmation
+("Shall I build it as described, or change anything?") with a "Build it as described" suggestion.
+Never reply "ready" on the first reply — always let the user review your interpretation first.
+  """
+    + _FIRST_Q_EXAMPLE
+    + """
+
+LATER REPLIES:
+- A single most-useful clarifying question would materially improve the design:
   {"status":"question","question":"<one short question>","suggestions":["<2-4 short answers>"]}
-- If the brief is already sufficient to start designing:
+- The brief is now sufficient to start designing:
   {"status":"ready"}
-Ask at most ONE question. Keep the question and each suggestion short. Never ask about
+Ask at most ONE question per reply. Keep the question and each suggestion short. Never ask about
 slicer or printer settings (those are handled elsewhere).
 
 REFERENCES (if any are listed below the brief — VIEW each render with the Read tool first):
@@ -60,22 +73,33 @@ def _parse_interview(reply: str) -> dict:
     if data.get("status") == "question" and isinstance(data.get("question"), str):
         sugg = data.get("suggestions")
         sugg = [str(s) for s in sugg][:4] if isinstance(sugg, list) else []
-        return {"status": "question", "question": data["question"].strip(), "suggestions": sugg}
-    return {"status": "ready"}
+        out = {"status": "question", "question": data["question"].strip(), "suggestions": sugg}
+        interp = data.get("interpretation")
+        if isinstance(interp, str) and interp.strip():
+            out["interpretation"] = interp.strip()
+        return out
+    # A "ready" reply may still carry a first-turn interpretation worth showing.
+    interp = data.get("interpretation")
+    out = {"status": "ready"}
+    if isinstance(interp, str) and interp.strip():
+        out["interpretation"] = interp.strip()
+    return out
 
 
 def interview_turn(
     brief: str,
     *,
+    first_turn: bool = False,
     attachments: list[str] | None = None,
     ref_note: str = "",
     driver: str | None = None,
     model: str | None = None,
     effort: str | None = None,
 ) -> dict:
-    """One clarifying turn. Returns ``{status: question, question, suggestions}`` or
-    ``{status: ready}`` — never raises, never blocks intake. When ``attachments`` (reference
-    renders) are given, the model can SEE them and engage about an STL before rebuilding."""
+    """One clarifying turn. Returns ``{status: question, question, suggestions[, interpretation]}``
+    or ``{status: ready[, interpretation]}`` — never raises, never blocks intake. On
+    ``first_turn`` the model leads with a professional ``interpretation`` of the shape. When
+    ``attachments`` (reference renders) are given, the model can SEE them and engage about an STL."""
     try:
         drv = resolve_driver(driver, model=model, effort=effort)
     except ValueError as exc:
@@ -83,12 +107,30 @@ def interview_turn(
     usable, reason = drv.available()
     if not usable:
         return {"status": "ready", "reason": f"interview skipped: {reason}"}
-    user = f"Part brief so far:\n\n{brief.strip()}{ref_note}\n\nReply with the JSON object only."
+    user = f"Part brief so far:\n\n{brief.strip()}{ref_note}\n\n"
+    if first_turn:
+        user += (
+            "This is the user's FIRST message — reply with status 'question', LEAD with your "
+            "'interpretation' of the shape (a professional restatement), then ask one clarification "
+            "or a build-confirmation. Do not reply 'ready' yet.\n\n"
+        )
+    user += "Reply with the JSON object only."
     try:
         reply = drv.complete(INTERVIEW_SYSTEM, [Message("user", user, attachments=tuple(attachments or ()))])
     except Exception as exc:  # noqa: BLE001 - any backend failure must not block intake
         return {"status": "ready", "reason": f"interview error: {exc}"}
     result = _parse_interview(reply)
+    # Enforce the first-turn pause in code, not just the prompt: a malformed or non-compliant
+    # "ready" reply must still pause for review, or the UX contract is silently bypassed.
+    if first_turn and result.get("status") != "question":
+        interp = result.get("interpretation")
+        result = {
+            "status": "question",
+            "question": "Shall I build it as described, or change anything?",
+            "suggestions": ["Build it as described"],
+        }
+        if interp:
+            result["interpretation"] = interp
     result["usage"] = getattr(drv, "last_usage", None)
     return result
 

@@ -1,5 +1,5 @@
 /** Pure helpers that derive UI state from a Chat record (artifacts, stats, status). */
-import type { ArtifactRef, Chat, SettingsDescriptor, SliceSettings } from "@agent-cad/types";
+import type { ArtifactRef, Chat, Checkpoint, SettingsDescriptor, SliceSettings } from "@agent-cad/types";
 
 import { assetUrl } from "./api";
 
@@ -72,6 +72,75 @@ export function buildSliceSettings(
   }
   return body as SliceSettings;
 }
+
+/**
+ * The current effective values for a new checkpoint — the print's base settings (descriptor
+ * defaults overlaid with the user's per-slice overrides). A checkpoint seeds from these so you
+ * tweak from real numbers instead of blanks. fan/accel aren't in the slice settings (no known
+ * base), so they stay blank = unchanged.
+ */
+export function checkpointDefaults(
+  descriptor: SettingsDescriptor | null,
+  values: Record<string, unknown>,
+): Partial<Checkpoint> {
+  const eff = (key: string): unknown => {
+    const v = values[key];
+    if (v != null && v !== "") return v;
+    return descriptor?.fields.find((f) => f.key === key)?.default;
+  };
+  const out: Record<string, unknown> = { speed_percent: 100 };
+  const nozzle = eff("nozzle_temp");
+  if (typeof nozzle === "number") out.nozzle_temp = nozzle;
+  const bed = eff("bed_temp");
+  if (typeof bed === "number") out.bed_temp = bed;
+  const flow = eff("flow");
+  if (typeof flow === "number") out.flow_percent = Math.round(flow * 100);
+  const jerk = eff("jerk");
+  if (typeof jerk === "number") out.jerk = jerk;
+  return out as Partial<Checkpoint>;
+}
+
+/**
+ * The settings a NEW checkpoint should start from: the previous (last) checkpoint's settings — so a
+ * second checkpoint continues where the first left off — or the print's base settings if it's the
+ * first. Strips the anchor (from_pct/from_layer); only the value settings carry over.
+ */
+export function checkpointSeed(
+  checkpoints: Checkpoint[],
+  baseDefaults: Partial<Checkpoint>,
+): Partial<Checkpoint> {
+  const prev = checkpoints[checkpoints.length - 1];
+  if (!prev) return baseDefaults;
+  const settings: Partial<Checkpoint> = { ...prev };
+  delete settings.from_pct;
+  delete settings.from_layer;
+  return settings;
+}
+
+/** The checkpoints actually injected into a sliced g-code artifact (persisted in slice_info).
+ *  Prefers `applied` (what really went into the g-code) over `requested`. */
+export function sliceCheckpointsFrom(ref: ArtifactRef | null): Checkpoint[] {
+  const info = ref?.slice_info as { checkpoints?: { applied?: unknown; requested?: Checkpoint[] } } | undefined;
+  const applied = info?.checkpoints?.applied;
+  if (Array.isArray(applied)) return applied as Checkpoint[];
+  return info?.checkpoints?.requested ?? [];
+}
+
+/** Short summary of what a checkpoint changes, e.g. "200°C · fan 100% · 60% speed". */
+export function checkpointLabel(cp: Checkpoint): string {
+  const parts: string[] = [];
+  if (cp.nozzle_temp != null) parts.push(`${cp.nozzle_temp}°C`);
+  if (cp.bed_temp != null) parts.push(`bed ${cp.bed_temp}°C`);
+  if (cp.fan_percent != null) parts.push(`fan ${cp.fan_percent}%`);
+  if (cp.flow_percent != null) parts.push(`flow ${cp.flow_percent}%`);
+  if (cp.speed_percent != null) parts.push(`${cp.speed_percent}% speed`);
+  if (cp.jerk != null) parts.push(`jerk ${cp.jerk}`);
+  if (cp.accel != null) parts.push(`accel ${cp.accel}`);
+  return parts.join(" · ") || "no change";
+}
+
+/** Distinct marker colours for checkpoints, by index (cycles). */
+export const CHECKPOINT_COLORS = ["#f59e0b", "#22d3ee", "#a78bfa", "#ec4899", "#34d399", "#fb7185"];
 
 /** Shallow value-equality of two SliceSettings-shaped maps (ignores `raw`, treats null≈absent). */
 export function sameSettings(a: Record<string, unknown>, b: Record<string, unknown>): boolean {

@@ -153,14 +153,17 @@ export interface PollOptions {
   timeoutMs?: number;
   intervalMs?: number;
   signal?: AbortSignal;
+  /** Called with each polled job, so callers can surface the live `phase` progress label. */
+  onPoll?: (job: z.infer<typeof Job>) => void;
 }
 
 /** Poll a job until it reaches a terminal state (succeeded / failed / interrupted). */
 export async function pollJob(jobId: string, opts: PollOptions = {}): Promise<z.infer<typeof Job>> {
-  const { timeoutMs = 300_000, intervalMs = 250, signal } = opts;
+  const { timeoutMs = 300_000, intervalMs = 250, signal, onPoll } = opts;
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const job = await getJob(jobId);
+    onPoll?.(job);
     if (TERMINAL.has(job.status)) return job;
     if (Date.now() > deadline) throw new ApiError(408, `job ${jobId} timed out after ${timeoutMs}ms`);
     await new Promise<void>((resolve, reject) => {

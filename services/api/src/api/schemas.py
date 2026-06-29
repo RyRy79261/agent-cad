@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class BuildRequest(BaseModel):
@@ -20,11 +20,41 @@ class BuildRequest(BaseModel):
     verify: bool = Field(default=False, description="Run printability checks on the result.")
 
 
+class Checkpoint(BaseModel):
+    """From ``from_pct``% of the print's height upward, apply these settings — anything that can
+    change mid-print via a single g-code command, injected after slicing. Stack several to say
+    "from here do X, from there do Y". (Retraction / walls / infill are baked into the toolpaths
+    and can't change mid-print — they need a re-slice.)
+    """
+
+    # Anchor: a % of the print height OR a specific layer number (e.g. picked in the slice
+    # preview). Exactly one is needed; ``from_layer`` wins if both are given.
+    from_pct: float | None = Field(default=None, ge=0, le=100, description="Apply above this % of height.")
+    from_layer: int | None = Field(default=None, ge=1, description="Or: apply from this layer number up.")
+    nozzle_temp: int | None = Field(default=None, ge=150, le=300)  # M104
+    bed_temp: int | None = Field(default=None, ge=0, le=120)  # M140
+    fan_percent: int | None = Field(default=None, ge=0, le=100)  # M106 / M107
+    flow_percent: int | None = Field(default=None, ge=50, le=150)  # M221 (extrusion multiplier)
+    speed_percent: int | None = Field(default=None, ge=20, le=300)  # M220 (feed-rate factor)
+    jerk: int | None = Field(default=None, ge=1, le=40)  # M205 X/Y (mm/s)
+    accel: int | None = Field(default=None, ge=100, le=10000)  # M204 P (print accel, mm/s²)
+    color: str | None = None  # UI only: the band colour for this checkpoint in the slice preview
+
+    @model_validator(mode="after")
+    def _needs_anchor(self) -> Checkpoint:
+        if self.from_pct is None and self.from_layer is None:
+            raise ValueError("a checkpoint needs from_pct or from_layer")
+        if self.from_layer is not None:
+            self.from_pct = None  # from_layer wins — canonicalize so the two anchors can't disagree
+        return self
+
+
 class SliceSettings(BaseModel):
     """Per-slice overrides of the committed Ender 5 S1 profile — all optional.
 
     Unset fields keep the committed default. ``raw`` is the power-user escape hatch:
     arbitrary OrcaSlicer ``key: value`` pairs (see ``slicer.profiles.route_raw_overrides``).
+    ``checkpoint`` is a post-slice per-height temp/fan change (not an OrcaSlicer key).
     """
 
     infill_density: int | None = Field(default=None, ge=0, le=100)
@@ -43,6 +73,7 @@ class SliceSettings(BaseModel):
     support: bool | None = None
     support_threshold: int | None = Field(default=None, ge=0, le=90)
     retraction_length: float | None = Field(default=None, ge=0, le=6)
+    checkpoints: list[Checkpoint] | None = None  # per-height setting changes (post-slice)
     raw: dict[str, str] | None = Field(
         default=None, description="Advanced: arbitrary OrcaSlicer key→value overrides."
     )

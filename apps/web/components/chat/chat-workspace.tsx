@@ -1,15 +1,20 @@
 "use client";
 
 import * as React from "react";
-import type { BuildVolume, Chat, Printer, SettingsDescriptor, Settings } from "@agent-cad/types";
+import type { BuildVolume, Chat, Checkpoint, Printer, SettingsDescriptor, Settings } from "@agent-cad/types";
 import { AlertCircle, Upload, Hammer, SquarePen, PanelRight, MoreHorizontal, Box, ArrowRight, Trash2 } from "lucide-react";
 
 import * as api from "@/lib/api";
 import {
   buildSliceSettings,
+  checkpointDefaults,
+  checkpointLabel,
+  checkpointSeed,
+  CHECKPOINT_COLORS,
   currentStlUrl,
   isDirty,
   latestArtifact,
+  sliceCheckpointsFrom,
   sliceStatsFrom,
   versioned,
 } from "@/lib/chat";
@@ -29,6 +34,7 @@ import { ReferencesTray } from "./references-tray";
 import { StatusBadge } from "./status-badge";
 import { Stepper } from "./stepper";
 import { PrintSettingsPanel } from "./print-settings-panel";
+import { CheckpointEditor } from "./checkpoint-editor";
 import { ViewerPanel, type ViewerTab } from "@/components/viewer/viewer-panel";
 import type { SettingsValues } from "@/components/settings/settings-form";
 
@@ -39,9 +45,16 @@ const HOW_IT_WORKS = ["Describe", "Refine", "Slice & print"];
 /** Generate/refine can take minutes at high effort — poll long before giving up (FR-CHAT-13). */
 const LONG_POLL = { timeoutMs: 600_000 };
 
+/** Chat statuses that mean a server-side job is still running (so we re-attach + show busy). */
+const WORKING_STATUSES = new Set(["generating", "interviewing", "slicing"]);
+
 /** Files accepted as a pinned reference (images + STL). */
 const REFERENCE_RE = /\.(png|jpe?g|webp|gif|stl)$/i;
 const isReferenceFile = (f: File) => REFERENCE_RE.test(f.name) || f.type.startsWith("image/");
+
+/** Editable CAD (real B-rep) — imported AS the model, not pinned as a reference. */
+const EDITABLE_CAD_RE = /\.(step|stp|brep)$/i;
+const isEditableCad = (f: File) => EDITABLE_CAD_RE.test(f.name);
 
 /** Friendly message for a poll timeout — the job keeps running server-side, so don't alarm. */
 function describeError(e: unknown): string {
@@ -67,6 +80,7 @@ export function ChatWorkspace() {
   const [printerId, setPrinterId] = React.useState<string | null>(null);
   const [filamentId, setFilamentId] = React.useState<string | null>(null);
   const [sliceValues, setSliceValues] = React.useState<SettingsValues>({});
+  const [checkpoints, setCheckpoints] = React.useState<Checkpoint[]>([]);
 
   const [input, setInput] = React.useState("");
   const [tab, setTab] = React.useState<ViewerTab>("model");
@@ -75,6 +89,9 @@ export function ChatWorkspace() {
   const [generating, setGenerating] = React.useState(false);
   const [interviewing, setInterviewing] = React.useState(false);
   const [slicing, setSlicing] = React.useState(false);
+  // Which chat the in-flight LOCAL job (generate/interview/slice) belongs to — so `busy` is scoped
+  // to the active chat and doesn't disable a different chat you've navigated to.
+  const [jobChatId, setJobChatId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
   // Optimistic message + live "working" timer: show the user's message instantly,
@@ -82,11 +99,19 @@ export function ChatWorkspace() {
   const [pendingText, setPendingText] = React.useState<string | null>(null);
   const [workStartedAt, setWorkStartedAt] = React.useState<number | null>(null);
   const [lastDurationMs, setLastDurationMs] = React.useState<number | null>(null);
+  // Live progress phase reported by the running job (e.g. "Designing your model — writing…").
+  const [livePhase, setLivePhase] = React.useState<string | null>(null);
 
   const [dragActive, setDragActive] = React.useState(false);
   const threadEndRef = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const refInputRef = React.useRef<HTMLInputElement>(null);
+  // The currently-viewed chat id, readable from async callbacks — so a background job that
+  // finishes can tell whether the user is still on its chat (and not yank them back).
+  const activeIdRef = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    activeIdRef.current = active?.id ?? null;
+  }, [active?.id]);
 
   // --- initial load -------------------------------------------------------- //
   React.useEffect(() => {
@@ -99,7 +124,10 @@ export function ChatWorkspace() {
         const def = ps.find((p) => p.default) ?? ps[0] ?? null;
         if (def) {
           setPrinterId(def.id);
-          setFilamentId(def.filaments[0]?.id ?? null);
+          // Restore the last filament used (persisted), not always the first one.
+          const saved = localStorage.getItem("agentcad:filamentId");
+          const valid = saved && def.filaments.some((f) => f.id === saved);
+          setFilamentId(valid ? saved : (def.filaments[0]?.id ?? null));
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -133,6 +161,10 @@ export function ChatWorkspace() {
   React.useEffect(() => {
     localStorage.setItem("agentcad:railWidth", String(Math.round(railWidth)));
   }, [railWidth]);
+  // Remember the last-used filament so a new session/chat defaults to it (not Generic PLA).
+  React.useEffect(() => {
+    if (filamentId) localStorage.setItem("agentcad:filamentId", filamentId);
+  }, [filamentId]);
 
   const refreshChats = React.useCallback(async () => {
     try {
@@ -142,25 +174,57 @@ export function ChatWorkspace() {
     }
   }, []);
 
+  // The server-side job keeps running when you leave a chat — poll the chat back to a settled
+  // state so a generation you navigated away from finishes (and appears) when you return.
+  const reattach = React.useCallback(
+    async (chatId: string) => {
+      for (let i = 0; i < 600; i++) {
+        await new Promise((r) => setTimeout(r, 1500));
+        if (activeIdRef.current !== chatId) return; // navigated away again — stop
+        let fresh: Chat;
+        try {
+          fresh = await api.getChat(chatId);
+        } catch {
+          continue;
+        }
+        if (activeIdRef.current === chatId) setActive(fresh);
+        if (!WORKING_STATUSES.has(fresh.status)) {
+          await refreshChats();
+          return;
+        }
+      }
+    },
+    [refreshChats],
+  );
+
   // --- actions ------------------------------------------------------------- //
-  const selectChat = React.useCallback(async (id: string) => {
-    setError(null);
-    setSliceValues({});
-    setTab("model");
-    try {
-      const chat = await api.getChat(id);
-      setActive(chat);
-      if (chat.printer_id) setPrinterId(chat.printer_id);
-      if (chat.filament_id) setFilamentId(chat.filament_id);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }, []);
+  const selectChat = React.useCallback(
+    async (id: string) => {
+      setError(null);
+      setSliceValues({});
+      setCheckpoints([]);
+      setTab("model");
+      try {
+        const chat = await api.getChat(id);
+        setActive(chat);
+        // Restore the checkpoints baked into the last slice so the editor isn't empty on reopen.
+        setCheckpoints(sliceCheckpointsFrom(latestArtifact(chat, "gcode")));
+        if (chat.printer_id) setPrinterId(chat.printer_id);
+        if (chat.filament_id) setFilamentId(chat.filament_id);
+        // Re-attach to an in-flight generation started before you navigated here.
+        if (WORKING_STATUSES.has(chat.status)) void reattach(id);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [reattach],
+  );
 
   const newChat = React.useCallback(() => {
     setActive(null);
     setInput("");
     setSliceValues({});
+    setCheckpoints([]);
     setTab("model");
     setError(null);
   }, []);
@@ -181,11 +245,13 @@ export function ChatWorkspace() {
   const generate = React.useCallback(
     async (chatId: string, prompt: string) => {
       setGenerating(true);
+      setJobChatId(chatId);
       setTab("model");
       setError(null);
       try {
-        await api.runJob(() => api.chatGenerate(chatId, prompt), LONG_POLL);
-        setActive(await api.getChat(chatId));
+        await api.runJob(() => api.chatGenerate(chatId, prompt), { ...LONG_POLL, onPoll: (j) => setLivePhase(j.phase ?? null) });
+        const updated = await api.getChat(chatId);
+        if (activeIdRef.current === chatId) setActive(updated); // don't yank if they navigated away
         await refreshChats();
       } catch (e) {
         setError(describeError(e));
@@ -202,11 +268,15 @@ export function ChatWorkspace() {
   const respond = React.useCallback(
     async (chatId: string, text: string) => {
       setInterviewing(true);
+      setJobChatId(chatId);
       setError(null);
       try {
-        const job = await api.runJob(() => api.chatRespond(chatId, text), LONG_POLL);
-        if (job.result?.action !== "chat") setTab("model"); // an edit produced a new model
-        setActive(await api.getChat(chatId));
+        const job = await api.runJob(() => api.chatRespond(chatId, text), { ...LONG_POLL, onPoll: (j) => setLivePhase(j.phase ?? null) });
+        const updated = await api.getChat(chatId);
+        if (activeIdRef.current === chatId) {
+          if (job.result?.action !== "chat") setTab("model"); // an edit produced a new model
+          setActive(updated);
+        }
         await refreshChats();
       } catch (e) {
         setError(describeError(e));
@@ -223,13 +293,16 @@ export function ChatWorkspace() {
   const interview = React.useCallback(
     async (chatId: string, text: string) => {
       setInterviewing(true);
+      setJobChatId(chatId);
       setError(null);
       try {
         // One job: it asks a follow-up, OR (when ready) generates inline — so poll long.
-        await api.runJob(() => api.chatInterview(chatId, text), LONG_POLL);
+        await api.runJob(() => api.chatInterview(chatId, text), { ...LONG_POLL, onPoll: (j) => setLivePhase(j.phase ?? null) });
         const updated = await api.getChat(chatId);
-        setActive(updated);
-        if (updated.current_stl) setTab("model"); // ready → it generated a model
+        if (activeIdRef.current === chatId) {
+          setActive(updated);
+          if (updated.current_stl) setTab("model"); // ready → it generated a model
+        }
         await refreshChats();
       } catch (e) {
         setError(describeError(e));
@@ -266,6 +339,7 @@ export function ChatWorkspace() {
         setLastDurationMs(Date.now() - startedAt); // "took Xm Ys"
         setWorkStartedAt(null);
         setPendingText(null);
+        setLivePhase(null);
       }
     },
     [active, interview, respond, refreshChats],
@@ -286,6 +360,7 @@ export function ChatWorkspace() {
   const importFile = React.useCallback(
     async (file: File) => {
       setGenerating(true);
+      setJobChatId(active?.id ?? null);
       setTab("model");
       setError(null);
       try {
@@ -362,12 +437,22 @@ export function ChatWorkspace() {
   const slice = React.useCallback(async () => {
     if (!active) return;
     setSlicing(true);
+    setJobChatId(active.id);
     setError(null);
     try {
-      const body =
-        descriptor && isDirty(descriptor, sliceValues)
-          ? { filament_id: filamentId ?? undefined, settings: buildSliceSettings(descriptor, sliceValues) }
-          : { filament_id: filamentId ?? undefined };
+      // Send `settings` when the user changed a descriptor field OR set any checkpoints
+      // (checkpoints aren't descriptor fields, so isDirty alone misses them).
+      const dirty = descriptor && isDirty(descriptor, sliceValues);
+      const overridden = dirty || checkpoints.length > 0;
+      const body = overridden
+        ? {
+            filament_id: filamentId ?? undefined,
+            settings: {
+              ...(descriptor ? buildSliceSettings(descriptor, sliceValues) : {}),
+              ...(checkpoints.length ? { checkpoints } : {}),
+            },
+          }
+        : { filament_id: filamentId ?? undefined };
       await api.runJob(() => api.chatSlice(active.id, body));
       setActive(await api.getChat(active.id));
       setTab("slice"); // auto-switch to Slice Preview on success (FR-CHAT-5)
@@ -377,17 +462,36 @@ export function ChatWorkspace() {
     } finally {
       setSlicing(false);
     }
-  }, [active, descriptor, sliceValues, filamentId, refreshChats]);
+  }, [active, descriptor, sliceValues, checkpoints, filamentId, refreshChats]);
 
   // --- derived ------------------------------------------------------------- //
   const stlUrl = currentStlUrl(active);
   const gcodeRef = latestArtifact(active, "gcode");
   const gcodeUrl = gcodeRef ? versioned(api.assetUrl(gcodeRef.url), active) : null;
   const stats = sliceStatsFrom(gcodeRef);
+  // Checkpoints actually baked into this slice (from slice_info) → coloured markers + 3D bands.
+  // Memoised by the g-code ref so the viewer's per-vertex recolour runs per-slice, not per-render.
+  const gcodeCheckpoints = React.useMemo(
+    () =>
+      sliceCheckpointsFrom(gcodeRef).map((cp, i) => ({
+        layer: cp.from_layer ?? null,
+        pct: cp.from_pct ?? null,
+        label: checkpointLabel(cp),
+        color: cp.color ?? CHECKPOINT_COLORS[i % CHECKPOINT_COLORS.length] ?? "#3b82f6",
+      })),
+    [gcodeRef],
+  );
   const status = active?.status ?? "new";
+  // True while a server-side job for THIS chat is running — whether we started it this session
+  // or re-attached to one we navigated back to (so the composer stays disabled + busy shows).
+  const reattached = WORKING_STATUSES.has(status);
   const activePrinter = printers.find((p) => p.id === printerId) ?? null;
   const buildVolume = activePrinter?.build_volume as BuildVolume | undefined;
-  const busy = generating || interviewing;
+  // Busy = a server-side job for THIS chat (re-attached via status), OR a local job (generate/
+  // interview/slice) we started AND that belongs to the chat we're looking at — so a job in chat A
+  // doesn't disable chat B after navigation, and a slice on the active chat disables the composer.
+  const localJob = (generating || interviewing || slicing) && jobChatId === active?.id;
+  const busy = reattached || localJob;
   // Suggestions row above the composer: refine "quick edits" once a model exists,
   // otherwise the latest AI turn's quick-reply chips (the interview answers).
   const lastAi = active ? [...active.messages].reverse().find((m) => m.role === "assistant") : undefined;
@@ -435,7 +539,7 @@ export function ChatWorkspace() {
       <input
         ref={fileInputRef}
         type="file"
-        accept=".stl"
+        accept=".stl,.step,.stp,.brep"
         className="hidden"
         onChange={(e) => {
           const file = e.target.files?.[0];
@@ -446,13 +550,16 @@ export function ChatWorkspace() {
       <input
         ref={refInputRef}
         type="file"
-        accept="image/*,.stl"
+        accept="image/*,.stl,.step,.stp,.brep"
         multiple
         className="hidden"
         onChange={(e) => {
           const files = Array.from(e.target.files ?? []);
           e.target.value = "";
-          void addReferenceFiles(files.filter(isReferenceFile));
+          // An editable CAD file becomes the model (import); the rest pin as references.
+          const cad = files.find(isEditableCad);
+          if (cad) void importFile(cad);
+          void addReferenceFiles(files.filter((f) => !isEditableCad(f) && isReferenceFile(f)));
         }}
       />
       <Sidebar
@@ -526,7 +633,11 @@ export function ChatWorkspace() {
           onDrop={(e) => {
             e.preventDefault();
             setDragActive(false);
-            void addReferenceFiles(Array.from(e.dataTransfer.files).filter(isReferenceFile));
+            const files = Array.from(e.dataTransfer.files);
+            // A dropped STEP/BREP is imported as an editable model; images/STL pin as references.
+            const cad = files.find(isEditableCad);
+            if (cad) void importFile(cad);
+            void addReferenceFiles(files.filter((f) => !isEditableCad(f) && isReferenceFile(f)));
           }}
         >
           {dragActive ? (
@@ -551,7 +662,7 @@ export function ChatWorkspace() {
                     ) : null}
                     {busy && workStartedAt ? (
                       <WorkingIndicator
-                        label={generating ? "Generating your model" : "Thinking about your request"}
+                        label={livePhase ?? (generating ? "Generating your model" : "Thinking about your request")}
                         startedAt={workStartedAt}
                       />
                     ) : null}
@@ -630,7 +741,7 @@ export function ChatWorkspace() {
                       className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
                     >
                       <Upload className="h-3.5 w-3.5" />
-                      import an STL as the model
+                      import a model (STL to print · STEP to edit)
                     </button>
                     <ReferencesTray
                       references={[]}
@@ -674,6 +785,28 @@ export function ChatWorkspace() {
               printerName={activePrinter?.name}
               generating={generating}
               slicing={slicing}
+              checkpointCount={checkpoints.length}
+              gcodeCheckpoints={gcodeCheckpoints}
+              onAddCheckpointAtLayer={(layer) => {
+                setCheckpoints((c) => [
+                  ...c,
+                  {
+                    ...checkpointSeed(c, checkpointDefaults(descriptor, sliceValues)),
+                    from_layer: layer,
+                    color: CHECKPOINT_COLORS[c.length % CHECKPOINT_COLORS.length],
+                  },
+                ]);
+                setTab("checkpoints");
+              }}
+              checkpointsSlot={
+                <CheckpointEditor
+                  checkpoints={checkpoints}
+                  onChange={setCheckpoints}
+                  newDefaults={checkpointDefaults(descriptor, sliceValues)}
+                  layerCount={stats?.layer_count ?? null}
+                  disabled={!stlUrl}
+                />
+              }
             />
             <PrintSettingsPanel
               printers={printers}
@@ -684,10 +817,12 @@ export function ChatWorkspace() {
                 const p = printers.find((x) => x.id === id);
                 setFilamentId(p?.filaments[0]?.id ?? null);
                 setSliceValues({});
+                setCheckpoints([]);
               }}
               onFilamentChange={(id) => {
                 setFilamentId(id);
                 setSliceValues({});
+                setCheckpoints([]);
               }}
               descriptor={descriptor}
               values={sliceValues}
