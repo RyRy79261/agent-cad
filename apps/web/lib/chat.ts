@@ -100,6 +100,23 @@ export function checkpointDefaults(
   return out as Partial<Checkpoint>;
 }
 
+/**
+ * The settings a NEW checkpoint should start from: the previous (last) checkpoint's settings — so a
+ * second checkpoint continues where the first left off — or the print's base settings if it's the
+ * first. Strips the anchor (from_pct/from_layer); only the value settings carry over.
+ */
+export function checkpointSeed(
+  checkpoints: Checkpoint[],
+  baseDefaults: Partial<Checkpoint>,
+): Partial<Checkpoint> {
+  const prev = checkpoints[checkpoints.length - 1];
+  if (!prev) return baseDefaults;
+  const settings: Partial<Checkpoint> = { ...prev };
+  delete settings.from_pct;
+  delete settings.from_layer;
+  return settings;
+}
+
 /** Shallow value-equality of two SliceSettings-shaped maps (ignores `raw`, treats null≈absent). */
 export function sameSettings(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
   const keys = new Set([...Object.keys(a ?? {}), ...Object.keys(b ?? {})]);

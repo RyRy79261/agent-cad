@@ -4,9 +4,13 @@ import * as React from "react";
 import type { Checkpoint } from "@agent-cad/types";
 import { Flag, Plus, Trash2 } from "lucide-react";
 
+import { cn } from "@/lib/utils";
+import { checkpointSeed } from "@/lib/chat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 /** The mid-print-changeable settings, in display order. (Retraction/walls/infill can't change
  *  mid-print — they're baked into the toolpaths — so they're not here.) */
@@ -25,6 +29,8 @@ export interface CheckpointEditorProps {
   onChange: (checkpoints: Checkpoint[]) => void;
   /** Current print settings a new checkpoint seeds from (so it starts filled, not blank). */
   newDefaults?: Partial<Checkpoint>;
+  /** Total layers in the latest slice — bounds the layer picker (null until sliced once). */
+  layerCount?: number | null;
   /** Model height (mm), if known — used to show the ≈mm of each % checkpoint. */
   modelHeightMm?: number | null;
   disabled?: boolean;
@@ -38,15 +44,29 @@ export function CheckpointEditor({
   checkpoints,
   onChange,
   newDefaults,
+  layerCount,
   modelHeightMm,
   disabled,
 }: CheckpointEditorProps) {
   const update = (i: number, patch: Partial<Checkpoint>) =>
     onChange(checkpoints.map((c, j) => (j === i ? { ...c, ...patch } : c)));
   const remove = (i: number) => onChange(checkpoints.filter((_, j) => j !== i));
-  const add = () => onChange([...checkpoints, { from_pct: 80, ...newDefaults } as Checkpoint]);
+  // A new checkpoint inherits the previous one's settings (or the print's base settings if first).
+  const add = () =>
+    onChange([...checkpoints, { ...checkpointSeed(checkpoints, newDefaults ?? {}), from_pct: 80 } as Checkpoint]);
   const num = (e: React.ChangeEvent<HTMLInputElement>) =>
     e.target.value === "" ? undefined : Number(e.target.value);
+
+  // Switch a checkpoint's anchor between % of height and a layer number, converting the value.
+  const setAnchorPct = (i: number, cp: Checkpoint) => {
+    const pct = layerCount && cp.from_layer ? clamp(Math.round((cp.from_layer / layerCount) * 100), 1, 100) : 80;
+    update(i, { from_pct: pct, from_layer: undefined });
+  };
+  const setAnchorLayer = (i: number, cp: Checkpoint) => {
+    if (!layerCount) return;
+    const layer = clamp(Math.round(((cp.from_pct ?? 80) / 100) * layerCount), 1, layerCount);
+    update(i, { from_layer: layer, from_pct: undefined });
+  };
 
   return (
     <div className="flex h-full flex-col gap-3 overflow-auto p-4">
@@ -54,10 +74,11 @@ export function CheckpointEditor({
         <h3 className="text-sm font-semibold">Slice checkpoints</h3>
         <p className="mt-1 text-xs text-muted-foreground">
           From a point in the print upward, change the settings — the layers below keep theirs. Anchor
-          a checkpoint by % here, or scrub to a layer in the <span className="text-foreground">Slice
-          Preview</span> and hit “+ Checkpoint here”. Stack several to ramp things up the print (e.g.
-          drop the temp and max the fan near the top to kill heat-soak stringing). Blank fields are
-          left unchanged.
+          each checkpoint by % of height or a layer number, and a new checkpoint continues from the
+          previous one’s settings. (You can also scrub to a layer in the{" "}
+          <span className="text-foreground">Slice Preview</span> and hit “+ Checkpoint here”.) Stack
+          several to ramp things up the print — e.g. drop the temp and max the fan near the top to kill
+          heat-soak stringing. Blank fields are left unchanged.
         </p>
         <p className="mt-1 text-[11px] text-subtle-foreground">
           These are everything the printer can change <span className="text-foreground">mid-print</span>
@@ -102,31 +123,65 @@ export function CheckpointEditor({
                 <Trash2 className="h-4 w-4" />
               </button>
             </div>
-            {byLayer ? (
+            {/* Anchor: % of height, or a layer number bounded by the real layer count. */}
+            <div className="space-y-2">
               <div className="flex items-center gap-2">
-                <Label className="text-[11px] text-muted-foreground">Layer</Label>
+                <div className="inline-flex overflow-hidden rounded-md border text-[11px]">
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setAnchorPct(i, cp)}
+                    className={cn(
+                      "px-2 py-1",
+                      !byLayer ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    % height
+                  </button>
+                  <button
+                    type="button"
+                    disabled={disabled || !layerCount}
+                    title={!layerCount ? "Slice once to pick by layer" : undefined}
+                    onClick={() => setAnchorLayer(i, cp)}
+                    className={cn(
+                      "border-l px-2 py-1 disabled:opacity-40",
+                      byLayer ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    Layer
+                  </button>
+                </div>
+                {byLayer && layerCount ? (
+                  <span className="text-[11px] text-subtle-foreground">of {layerCount} layers</span>
+                ) : null}
+              </div>
+
+              {byLayer ? (
                 <Input
                   type="number"
                   min={1}
+                  max={layerCount ?? undefined}
                   value={cp.from_layer ?? ""}
                   disabled={disabled}
-                  onChange={(e) => update(i, { from_layer: e.target.value === "" ? 1 : Number(e.target.value) })}
-                  className="h-8 w-24"
+                  onChange={(e) => {
+                    const v = e.target.value === "" ? 1 : Number(e.target.value);
+                    update(i, { from_layer: layerCount ? clamp(v, 1, layerCount) : Math.max(1, v) });
+                  }}
+                  className="h-8 w-28"
                 />
-                <span className="text-[11px] text-subtle-foreground">(set from the Slice Preview)</span>
-              </div>
-            ) : (
-              <input
-                type="range"
-                min={5}
-                max={98}
-                step={1}
-                value={cp.from_pct ?? 80}
-                disabled={disabled}
-                onChange={(e) => update(i, { from_pct: Number(e.target.value) })}
-                className="w-full accent-primary"
-              />
-            )}
+              ) : (
+                <input
+                  type="range"
+                  min={5}
+                  max={98}
+                  step={1}
+                  value={cp.from_pct ?? 80}
+                  disabled={disabled}
+                  onChange={(e) => update(i, { from_pct: Number(e.target.value) })}
+                  className="w-full accent-primary"
+                />
+              )}
+            </div>
             <div className="grid grid-cols-3 gap-2">
               {FIELDS.map((f) => (
                 <div key={f.key} className="space-y-1">

@@ -8,6 +8,7 @@ import * as api from "@/lib/api";
 import {
   buildSliceSettings,
   checkpointDefaults,
+  checkpointSeed,
   currentStlUrl,
   isDirty,
   latestArtifact,
@@ -757,7 +758,10 @@ export function ChatWorkspace() {
               slicing={slicing}
               checkpointCount={checkpoints.length}
               onAddCheckpointAtLayer={(layer) => {
-                setCheckpoints((c) => [...c, { from_layer: layer, ...checkpointDefaults(descriptor, sliceValues) }]);
+                setCheckpoints((c) => [
+                  ...c,
+                  { ...checkpointSeed(c, checkpointDefaults(descriptor, sliceValues)), from_layer: layer },
+                ]);
                 setTab("checkpoints");
               }}
               checkpointsSlot={
@@ -765,6 +769,7 @@ export function ChatWorkspace() {
                   checkpoints={checkpoints}
                   onChange={setCheckpoints}
                   newDefaults={checkpointDefaults(descriptor, sliceValues)}
+                  layerCount={stats?.layer_count ?? null}
                   disabled={!stlUrl}
                 />
               }
