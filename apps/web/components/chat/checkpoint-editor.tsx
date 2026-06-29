@@ -62,8 +62,13 @@ export function CheckpointEditor({
         color: CHECKPOINT_COLORS[checkpoints.length % CHECKPOINT_COLORS.length],
       } as Checkpoint,
     ]);
-  const num = (e: React.ChangeEvent<HTMLInputElement>) =>
-    e.target.value === "" ? undefined : Number(e.target.value);
+  // Parse + clamp at the editor boundary: `min`/`max` on a number input don't block typed
+  // out-of-range values, and intermediate edits can be NaN — both would 422 on the next slice.
+  const fieldNum = (e: React.ChangeEvent<HTMLInputElement>, min: number, max: number) => {
+    if (e.target.value === "") return undefined;
+    const v = Number(e.target.value);
+    return Number.isNaN(v) ? undefined : clamp(v, min, max);
+  };
 
   // Switch a checkpoint's anchor between % of height and a layer number, converting the value.
   const setAnchorPct = (i: number, cp: Checkpoint) => {
@@ -180,8 +185,8 @@ export function CheckpointEditor({
               ) : (
                 <input
                   type="range"
-                  min={5}
-                  max={98}
+                  min={1}
+                  max={100}
                   step={1}
                   value={cp.from_pct ?? 80}
                   disabled={disabled}
@@ -221,7 +226,7 @@ export function CheckpointEditor({
                     placeholder={f.ph}
                     disabled={disabled}
                     value={typeof cp[f.key] === "number" ? (cp[f.key] as number) : ""}
-                    onChange={(e) => update(i, { [f.key]: num(e) } as Partial<Checkpoint>)}
+                    onChange={(e) => update(i, { [f.key]: fieldNum(e, f.min, f.max) } as Partial<Checkpoint>)}
                     className="h-8"
                   />
                 </div>

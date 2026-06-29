@@ -18,9 +18,9 @@ from pathlib import Path
 
 # A G0/G1 move carrying a Z value (before any inline comment).
 _Z_MOVE = re.compile(r"^G[01]\b[^;]*\bZ(-?\d+(?:\.\d+)?)")
-# A G1 that extrudes (carries an E) — i.e. actual printing, at the current layer Z. Used to find
-# the real print height, ignoring the start-g-code Z clearance / end-of-print bed drop (no E).
-_EXTRUDE = re.compile(r"^G1\b[^;]*\bE-?\d")
+# A G1 that PRINTS — moves in X/Y *and* extrudes a positive amount. Excludes pure retract/prime and
+# Z-hops (E-only or negative-E moves), so they don't set the print height or trigger a checkpoint.
+_EXTRUDE = re.compile(r"^G1\b(?=[^;]*\b[XY]-?[\d.])(?=[^;]*\bE\d)")
 
 
 def _anchor_label(cp: Mapping) -> str:
@@ -55,11 +55,13 @@ def _checkpoint_gcode(cp: Mapping, anchor: str) -> list[str]:
     return out
 
 
-def apply_checkpoints(gcode_path: str | Path, checkpoints: Sequence[Mapping]) -> int:
+def apply_checkpoints(gcode_path: str | Path, checkpoints: Sequence[Mapping]) -> list[Mapping]:
     """Inject each checkpoint's settings at the first printing layer past its height %. Edits the
-    g-code in place. Returns how many checkpoints actually injected something."""
+    g-code in place. Returns the checkpoints that actually injected something (subset of the input,
+    in input order) — a checkpoint with no settings, or whose anchor is past the end, injects nothing.
+    """
     if not checkpoints:
-        return 0
+        return []
     path = Path(gcode_path)
     text = path.read_text(encoding="utf-8", errors="replace")
     lines = text.splitlines()
@@ -77,26 +79,26 @@ def apply_checkpoints(gcode_path: str | Path, checkpoints: Sequence[Mapping]) ->
         heights = [float(m.group(1)) for line in lines if (m := _Z_MOVE.match(line))]
         print_top = max(heights, default=0.0)
     if print_top <= 0:
-        return 0
+        return []
 
     # Each pending checkpoint carries a trigger: a Z threshold (from_pct) or a layer number
-    # (from_layer wins if both given). [kind, value, gcode_lines, injected?].
+    # (from_layer wins if both given). [kind, value, gcode_lines, injected?, cp].
     pending: list[list] = []
     for cp in checkpoints:
         gcode = _checkpoint_gcode(cp, _anchor_label(cp))
         if not gcode:
             continue
         if cp.get("from_layer") is not None:
-            pending.append(["layer", int(cp["from_layer"]), gcode, False])
+            pending.append(["layer", int(cp["from_layer"]), gcode, False, cp])
         elif cp.get("from_pct") is not None:
-            pending.append(["z", (float(cp["from_pct"]) / 100.0) * print_top, gcode, False])
+            pending.append(["z", (float(cp["from_pct"]) / 100.0) * print_top, gcode, False, cp])
     if not pending:
-        return 0
+        return []
 
     out: list[str] = []
     z = 0.0
     layer = 0
-    applied = 0
+    applied: list[Mapping] = []
     for line in lines:
         if line.startswith(";LAYER_CHANGE"):
             layer += 1  # the Nth ;LAYER_CHANGE starts layer N (matches the slice-preview slider)
@@ -111,8 +113,9 @@ def apply_checkpoints(gcode_path: str | Path, checkpoints: Sequence[Mapping]) ->
                 if not entry[3] and reached:
                     out.extend(entry[2])
                     entry[3] = True
-                    applied += 1
+                    applied.append(entry[4])
         out.append(line)
     if applied:
         path.write_text("\n".join(out) + "\n", encoding="utf-8")
-    return applied
+    # Preserve the caller's input order in the returned subset.
+    return [cp for cp in checkpoints if any(cp is a for a in applied)]

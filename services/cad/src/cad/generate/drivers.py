@@ -15,8 +15,10 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import queue
 import shutil
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -164,11 +166,29 @@ class ClaudeCodeDriver:
         result_payload: dict | None = None
         block_type, chars, last_report = "text", 0, 0.0
         deadline = time.monotonic() + self.timeout
+        # Read stdout on a thread so a stalled-but-alive CLI can't block us past the deadline
+        # (a plain `for line in proc.stdout` only re-checks the deadline when a line arrives).
+        lines: queue.Queue = queue.Queue()
+
+        def _pump(stream: object) -> None:
+            try:
+                for ln in stream or ():  # type: ignore[union-attr]
+                    lines.put(ln)
+            finally:
+                lines.put(None)  # EOF sentinel
+
+        threading.Thread(target=_pump, args=(proc.stdout,), daemon=True).start()
         try:
-            for line in proc.stdout or ():
+            while True:
                 if time.monotonic() > deadline:
                     proc.kill()
                     return 1, None
+                try:
+                    line = lines.get(timeout=0.5)
+                except queue.Empty:
+                    continue  # stdout stalled — re-check the deadline instead of blocking forever
+                if line is None:
+                    break  # reader thread hit EOF
                 line = line.strip()
                 if not line:
                     continue

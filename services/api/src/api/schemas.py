@@ -44,6 +44,8 @@ class Checkpoint(BaseModel):
     def _needs_anchor(self) -> Checkpoint:
         if self.from_pct is None and self.from_layer is None:
             raise ValueError("a checkpoint needs from_pct or from_layer")
+        if self.from_layer is not None:
+            self.from_pct = None  # from_layer wins — canonicalize so the two anchors can't disagree
         return self
 
 

@@ -120,6 +120,17 @@ def interview_turn(
     except Exception as exc:  # noqa: BLE001 - any backend failure must not block intake
         return {"status": "ready", "reason": f"interview error: {exc}"}
     result = _parse_interview(reply)
+    # Enforce the first-turn pause in code, not just the prompt: a malformed or non-compliant
+    # "ready" reply must still pause for review, or the UX contract is silently bypassed.
+    if first_turn and result.get("status") != "question":
+        interp = result.get("interpretation")
+        result = {
+            "status": "question",
+            "question": "Shall I build it as described, or change anything?",
+            "suggestions": ["Build it as described"],
+        }
+        if interp:
+            result["interpretation"] = interp
     result["usage"] = getattr(drv, "last_usage", None)
     return result
 

@@ -1030,8 +1030,8 @@ def attach_import(chat_id: str, import_id: str) -> Chat:
         chat = get_chat(store, chat_id)
         assert chat is not None
         if not result.ok or not (art_dir / "model.stl").exists():
-            chat.status = "new"
-            save_chat(store, chat)
+            # Don't downgrade an existing chat on a bad import — leave its status/artifacts intact
+            # and just report the failure.
             tail = (result.error or "could not read the file").strip().splitlines()[-1][:200]
             append_message(
                 store, chat_id, "assistant",
@@ -1145,11 +1145,13 @@ async def import_model(file: Annotated[UploadFile, File()]) -> dict:
         watertight = bool(mesh.is_watertight)
     else:  # editable STEP / BREP
         try:
-            extents, _vol = cad_bbox(dst)
+            extents, vol = cad_bbox(dst)
         except Exception as exc:  # noqa: BLE001 - reject anything build123d can't read
             dst.unlink(missing_ok=True)
             raise HTTPException(status_code=400, detail=f"could not read this CAD file: {exc}") from exc
-        watertight = True
+        # A closed solid has positive volume; an open shell/surface reads ~0 — don't claim those
+        # are printable solids.
+        watertight = vol > 0
     if min(extents) <= 0:
         dst.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="degenerate geometry (zero extent)")

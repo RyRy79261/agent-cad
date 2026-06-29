@@ -117,9 +117,12 @@ export function checkpointSeed(
   return settings;
 }
 
-/** The checkpoints actually baked into a sliced g-code artifact (persisted in slice_info). */
+/** The checkpoints actually injected into a sliced g-code artifact (persisted in slice_info).
+ *  Prefers `applied` (what really went into the g-code) over `requested`. */
 export function sliceCheckpointsFrom(ref: ArtifactRef | null): Checkpoint[] {
-  const info = ref?.slice_info as { checkpoints?: { requested?: Checkpoint[] } } | undefined;
+  const info = ref?.slice_info as { checkpoints?: { applied?: unknown; requested?: Checkpoint[] } } | undefined;
+  const applied = info?.checkpoints?.applied;
+  if (Array.isArray(applied)) return applied as Checkpoint[];
   return info?.checkpoints?.requested ?? [];
 }
 

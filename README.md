@@ -44,7 +44,7 @@ first (`pkill -f next-server; pkill -f "uvicorn api.main"`).
   Free-text → CAD runs on your existing Claude **subscription**; **no metered API key needed**.
 - **OrcaSlicer** — for slicing. Auto-detected at `~/Applications/OrcaSlicer.AppImage` (or set
   `$ORCA_SLICER_BIN`); on a headless Linux box it's wrapped in `xvfb-run` automatically.
-- **Python 3.11+** (managed by `uv`) and **Node 20+** with **pnpm**.
+- **Python 3.11+** (managed by `uv`) and **Node ≥ 22** with **pnpm ≥ 10**.
 
 Your data — chats, printers, filaments, settings, generated artifacts — lives under
 `~/.agent-cad/` and is created on first run.

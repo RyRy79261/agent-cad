@@ -170,6 +170,10 @@ export const Checkpoint = z.object({
   jerk: z.number().int().min(1).max(40).nullish(),
   accel: z.number().int().min(100).max(10000).nullish(),
   color: z.string().nullish(), // UI: the band colour in the slice preview
+}).refine((c) => c.from_pct != null || c.from_layer != null, {
+  // Mirror the backend: a checkpoint must anchor on a % or a layer — catch it client-side.
+  message: "a checkpoint needs from_pct or from_layer",
+  path: ["from_pct"],
 });
 export type Checkpoint = z.infer<typeof Checkpoint>;
 

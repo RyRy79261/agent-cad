@@ -89,6 +89,9 @@ export function ChatWorkspace() {
   const [generating, setGenerating] = React.useState(false);
   const [interviewing, setInterviewing] = React.useState(false);
   const [slicing, setSlicing] = React.useState(false);
+  // Which chat the in-flight LOCAL job (generate/interview/slice) belongs to — so `busy` is scoped
+  // to the active chat and doesn't disable a different chat you've navigated to.
+  const [jobChatId, setJobChatId] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
   // Optimistic message + live "working" timer: show the user's message instantly,
@@ -204,6 +207,8 @@ export function ChatWorkspace() {
       try {
         const chat = await api.getChat(id);
         setActive(chat);
+        // Restore the checkpoints baked into the last slice so the editor isn't empty on reopen.
+        setCheckpoints(sliceCheckpointsFrom(latestArtifact(chat, "gcode")));
         if (chat.printer_id) setPrinterId(chat.printer_id);
         if (chat.filament_id) setFilamentId(chat.filament_id);
         // Re-attach to an in-flight generation started before you navigated here.
@@ -240,6 +245,7 @@ export function ChatWorkspace() {
   const generate = React.useCallback(
     async (chatId: string, prompt: string) => {
       setGenerating(true);
+      setJobChatId(chatId);
       setTab("model");
       setError(null);
       try {
@@ -262,6 +268,7 @@ export function ChatWorkspace() {
   const respond = React.useCallback(
     async (chatId: string, text: string) => {
       setInterviewing(true);
+      setJobChatId(chatId);
       setError(null);
       try {
         const job = await api.runJob(() => api.chatRespond(chatId, text), { ...LONG_POLL, onPoll: (j) => setLivePhase(j.phase ?? null) });
@@ -286,6 +293,7 @@ export function ChatWorkspace() {
   const interview = React.useCallback(
     async (chatId: string, text: string) => {
       setInterviewing(true);
+      setJobChatId(chatId);
       setError(null);
       try {
         // One job: it asks a follow-up, OR (when ready) generates inline — so poll long.
@@ -352,6 +360,7 @@ export function ChatWorkspace() {
   const importFile = React.useCallback(
     async (file: File) => {
       setGenerating(true);
+      setJobChatId(active?.id ?? null);
       setTab("model");
       setError(null);
       try {
@@ -428,6 +437,7 @@ export function ChatWorkspace() {
   const slice = React.useCallback(async () => {
     if (!active) return;
     setSlicing(true);
+    setJobChatId(active.id);
     setError(null);
     try {
       // Send `settings` when the user changed a descriptor field OR set any checkpoints
@@ -477,7 +487,11 @@ export function ChatWorkspace() {
   const reattached = WORKING_STATUSES.has(status);
   const activePrinter = printers.find((p) => p.id === printerId) ?? null;
   const buildVolume = activePrinter?.build_volume as BuildVolume | undefined;
-  const busy = generating || interviewing || reattached;
+  // Busy = a server-side job for THIS chat (re-attached via status), OR a local job (generate/
+  // interview/slice) we started AND that belongs to the chat we're looking at — so a job in chat A
+  // doesn't disable chat B after navigation, and a slice on the active chat disables the composer.
+  const localJob = (generating || interviewing || slicing) && jobChatId === active?.id;
+  const busy = reattached || localJob;
   // Suggestions row above the composer: refine "quick edits" once a model exists,
   // otherwise the latest AI turn's quick-reply chips (the interview answers).
   const lastAi = active ? [...active.messages].reverse().find((m) => m.role === "assistant") : undefined;

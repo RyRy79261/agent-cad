@@ -51,9 +51,12 @@ function Model({
     if (framedRef.current) return;
     const radius = prepared.boundingSphere?.radius ?? 50;
     if (!(camera instanceof PerspectiveCamera)) return;
-    // Distance at which a sphere of `radius` fills the vertical FOV, times the margin for breathing
-    // room. The sphere over-bounds the actual part, so there's already a little slack on top.
-    const distance = (radius / Math.sin((camera.fov * Math.PI) / 360)) * FRAME_MARGIN;
+    // Distance at which a sphere of `radius` fills the view, times the margin for breathing room.
+    // Fit against the SMALLER of the vertical/horizontal FOV so wide parts on a tall/narrow canvas
+    // aren't cropped. The sphere over-bounds the actual part, so there's already a little slack.
+    const vFov = (camera.fov * Math.PI) / 180;
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+    const distance = (radius / Math.sin(Math.min(vFov, hFov) / 2)) * FRAME_MARGIN;
     const dir = new Vector3(1, 0.75, 1).normalize();
     camera.position.copy(dir.multiplyScalar(distance));
     camera.near = Math.max(0.1, distance - radius * 2);
@@ -94,7 +97,8 @@ export function StlViewer({ url, color, className }: StlViewerProps) {
         <Suspense fallback={null}>
           <Model url={url} color={color} framedRef={framedRef} />
         </Suspense>
-        <OrbitControls makeDefault enablePan screenSpacePanning zoomToCursor minDistance={1} maxDistance={4000} />
+        {/* maxDistance is generous so it never clamps the computed fit distance for a large part. */}
+        <OrbitControls makeDefault enablePan screenSpacePanning zoomToCursor minDistance={1} maxDistance={100000} />
       </Canvas>
     </div>
   );

@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from slicer.postprocess import apply_checkpoints
+from slicer.postprocess import _EXTRUDE, apply_checkpoints
+
+
+def test_extrude_regex_matches_only_real_printing_moves():
+    assert _EXTRUDE.match("G1 X10 Y10 E1.5 F600")  # printing
+    assert not _EXTRUDE.match("G1 E-2.0 F1800")  # retract (no X/Y, negative E)
+    assert not _EXTRUDE.match("G1 E5 F1800")  # prime / de-retract (no X/Y)
+    assert not _EXTRUDE.match("G1 Z50 F600")  # Z clearance
+    assert not _EXTRUDE.match("G0 X10 Y10 F9000")  # travel
 
 
 def _synthetic_gcode(tmp_path):
@@ -21,7 +29,7 @@ def _synthetic_gcode(tmp_path):
 def test_layer_anchored_checkpoint(tmp_path):
     g = _synthetic_gcode(tmp_path)
     # "from layer 8 up" → inject at the 8th ;LAYER_CHANGE (Z1.6), not a %.
-    assert apply_checkpoints(g, [{"from_layer": 8, "nozzle_temp": 190}]) == 1
+    assert len(apply_checkpoints(g, [{"from_layer": 8, "nozzle_temp": 190}])) == 1
     out = g.read_text().splitlines()
     inj = next(i for i, line in enumerate(out) if "M104 S190" in line)
     # it lands in layer 8: after the 8th ;LAYER_CHANGE and at/after Z1.6, before layer 9 (Z1.8).
@@ -31,14 +39,14 @@ def test_layer_anchored_checkpoint(tmp_path):
 
 def test_multiple_checkpoints_inject_at_their_heights(tmp_path):
     g = _synthetic_gcode(tmp_path)
-    n = apply_checkpoints(
+    applied = apply_checkpoints(
         g,
         [
             {"from_pct": 50, "nozzle_temp": 205, "fan_percent": 80},
             {"from_pct": 90, "nozzle_temp": 195, "fan_percent": 100, "speed_percent": 60},
         ],
     )
-    assert n == 2
+    assert len(applied) == 2
     out = g.read_text()
     # print height = 2.0 → 50% lands at Z1.0, 90% at Z1.8; each set injects once, in order.
     assert out.count("M104 S205") == 1 and out.count("M104 S195") == 1
@@ -58,7 +66,7 @@ def test_fan_off_uses_m107_and_flow_scales(tmp_path):
 
 def test_motion_settings_inject_m205_and_m204(tmp_path):
     g = _synthetic_gcode(tmp_path)
-    assert apply_checkpoints(g, [{"from_pct": 0, "jerk": 12, "accel": 800}]) == 1
+    assert len(apply_checkpoints(g, [{"from_pct": 0, "jerk": 12, "accel": 800}])) == 1
     out = g.read_text()
     assert "M205 X12 Y12 ; checkpoint @0%: jerk" in out
     assert "M204 P800 ; checkpoint @0%: acceleration" in out
@@ -66,5 +74,5 @@ def test_motion_settings_inject_m205_and_m204(tmp_path):
 
 def test_noop_when_no_settings(tmp_path):
     g = _synthetic_gcode(tmp_path)
-    assert apply_checkpoints(g, [{"from_pct": 80}]) == 0  # no fields set → nothing to inject
-    assert apply_checkpoints(g, []) == 0
+    assert apply_checkpoints(g, [{"from_pct": 80}]) == []  # no fields set → nothing to inject
+    assert apply_checkpoints(g, []) == []
