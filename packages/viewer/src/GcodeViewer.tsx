@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Box3, type Object3D, type PerspectiveCamera, Vector3 } from "three";
 import { ENDER_5_S1, type BuildVolume } from "@agent-cad/types";
 
 /** Dark canvas + brand-blue extrusion to match the Agent CAD viewer (tokens --background / --primary). */
@@ -32,6 +33,39 @@ interface Preview {
   controls: { target: Vec3; update(): void };
   processGCode(gcode: string): void;
   render(): void;
+}
+
+/**
+ * Frame the printed PART with breathing room. gcode-preview frames the whole 220×220 build
+ * volume, so a small part looks lost; this dollies the camera to the printed geometry's bounds
+ * (×1.4 a snug fit) so the part sits in view with space around it — instead of the old fixed
+ * 62%-toward-target dolly that over-zoomed larger parts. Falls back to a gentle dolly if the
+ * part group isn't readable.
+ */
+function framePart(preview: Preview): void {
+  const p = preview as unknown as {
+    camera: PerspectiveCamera;
+    controls: { target: Vector3; update(): void };
+    group?: Object3D;
+  };
+  const box = p.group ? new Box3().setFromObject(p.group) : null;
+  if (box && !box.isEmpty()) {
+    const center = box.getCenter(new Vector3());
+    const radius = 0.5 * box.getSize(new Vector3()).length() || 50;
+    const distance = (radius / Math.sin((p.camera.fov * Math.PI) / 360)) * 1.4;
+    const dir = p.camera.position.clone().sub(p.controls.target);
+    if (dir.lengthSq() < 1e-6) dir.set(1, 1, 1);
+    dir.normalize();
+    p.controls.target.copy(center);
+    p.camera.position.copy(center.clone().add(dir.multiplyScalar(distance)));
+    p.camera.near = Math.max(0.1, distance - radius * 4);
+    p.camera.far = distance + radius * 8;
+    p.camera.updateProjectionMatrix();
+    p.controls.update();
+  } else {
+    preview.camera.position.lerp(preview.controls.target, 0.4);
+    preview.controls.update();
+  }
 }
 
 /**
@@ -72,10 +106,7 @@ export function GcodeViewer({
         if (cancelled) return;
         preview.processGCode(gcode);
         preview.render();
-        // gcode-preview frames the whole 220×220 bed; dolly toward the part so a
-        // small part (e.g. a 20mm cube) fills the view instead of looking lost.
-        preview.camera.position.lerp(preview.controls.target, 0.62);
-        preview.controls.update();
+        framePart(preview);
         preview.render();
         previewRef.current = preview;
         const max = preview.maxLayerIndex || 0;

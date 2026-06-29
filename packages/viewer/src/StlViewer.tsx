@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useMemo, useRef } from "react";
 import { Canvas, useLoader, useThree } from "@react-three/fiber";
-import { Environment, OrbitControls } from "@react-three/drei";
+import { OrbitControls } from "@react-three/drei";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { PerspectiveCamera, Vector3, type BufferGeometry } from "three";
 
@@ -85,10 +85,12 @@ export function StlViewer({ url, color, className }: StlViewerProps) {
   return (
     <div className={className} style={{ width: "100%", height: "100%" }}>
       <Canvas camera={{ position: [180, 180, 180], fov: 40 }}>
-        <ambientLight intensity={0.6} />
+        {/* Lights only — no network HDR environment (it suspends/fetches and the app is local-first;
+            a low metalness means env reflections were barely visible anyway). */}
+        <hemisphereLight args={[0xffffff, 0x202a3a, 0.8]} />
+        <ambientLight intensity={0.35} />
         <directionalLight position={[1, 1.5, 1]} intensity={1.3} />
         <directionalLight position={[-1, 0.5, -1]} intensity={0.5} />
-        <Environment preset="city" />
         <Suspense fallback={null}>
           <Model url={url} color={color} framedRef={framedRef} />
         </Suspense>
