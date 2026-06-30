@@ -18,9 +18,10 @@ from pathlib import Path
 
 # A G0/G1 move carrying a Z value (before any inline comment).
 _Z_MOVE = re.compile(r"^G[01]\b[^;]*\bZ(-?\d+(?:\.\d+)?)")
-# A G1 that PRINTS — moves in X/Y *and* extrudes a positive amount. Excludes pure retract/prime and
-# Z-hops (E-only or negative-E moves), so they don't set the print height or trigger a checkpoint.
-_EXTRUDE = re.compile(r"^G1\b(?=[^;]*\b[XY]-?[\d.])(?=[^;]*\bE\d)")
+# A G1 that PRINTS — moves in X/Y *and* extrudes a positive amount. The E value may be written
+# `E.039` (relative / M83 — this printer patches to M83) or `E1.5`/`E10` (absolute), so allow a
+# leading dot; a leading `-` (retract) is excluded. Pure retract/prime/Z-hop moves don't match.
+_EXTRUDE = re.compile(r"^G1\b(?=[^;]*\b[XY]-?[\d.])(?=[^;]*\bE\.?\d)")
 
 
 def _anchor_label(cp: Mapping) -> str:

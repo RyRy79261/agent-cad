@@ -6,7 +6,8 @@ from slicer.postprocess import _EXTRUDE, apply_checkpoints
 
 
 def test_extrude_regex_matches_only_real_printing_moves():
-    assert _EXTRUDE.match("G1 X10 Y10 E1.5 F600")  # printing
+    assert _EXTRUDE.match("G1 X10 Y10 E1.5 F600")  # printing (absolute)
+    assert _EXTRUDE.match("G1 X32.017 Y29.432 E.03956")  # printing (M83 relative — leading-dot E)
     assert not _EXTRUDE.match("G1 E-2.0 F1800")  # retract (no X/Y, negative E)
     assert not _EXTRUDE.match("G1 E5 F1800")  # prime / de-retract (no X/Y)
     assert not _EXTRUDE.match("G1 Z50 F600")  # Z clearance
