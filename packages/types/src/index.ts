@@ -194,6 +194,8 @@ export const SliceSettings = z.object({
   support: z.boolean().nullish(),
   support_threshold: z.number().int().min(0).max(90).nullish(),
   retraction_length: z.number().min(0).max(6).nullish(),
+  wall_generator: z.enum(["arachne", "classic"]).nullish(),
+  z_hop: z.number().min(0).max(5).nullish(),
   checkpoints: z.array(Checkpoint).nullish(),
   raw: z.record(z.string(), z.string()).nullish(),
 });

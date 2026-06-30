@@ -72,6 +72,8 @@ def slice_overrides(
     support: bool | None = None,
     support_threshold: int | None = None,
     retraction_length: float | None = None,
+    wall_generator: str | None = None,
+    z_hop: float | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Map user-facing slice settings → per-profile OrcaSlicer key overrides.
 
@@ -127,6 +129,10 @@ def slice_overrides(
         process["support_threshold_angle"] = str(int(support_threshold))
     if retraction_length is not None:
         machine["retraction_length"] = [str(retraction_length)]
+    if wall_generator is not None:
+        process["wall_generator"] = str(wall_generator)
+    if z_hop is not None:
+        machine["z_hop"] = [str(z_hop)]
 
     return {k: v for k, v in (("process", process), ("machine", machine), ("filament", filament)) if v}
 

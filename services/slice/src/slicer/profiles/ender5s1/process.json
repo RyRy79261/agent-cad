@@ -106,5 +106,6 @@
     "xy_contour_compensation": "0",
     "compatible_printers": [
         "Creality Ender-5 S1 0.4 nozzle"
-    ]
+    ],
+    "wall_generator": "arachne"
 }

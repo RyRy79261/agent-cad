@@ -224,6 +224,28 @@ _FIELDS: list[dict[str, Any]] = [
         "advanced": True,
         "help": "Near-inert at low wall speeds — a guardrail, not a tuning lever.",
     },
+    {
+        "key": "wall_generator",
+        "label": "Wall generator",
+        "input": "select",
+        "scope": "process",
+        "binding": "per-slice",
+        "group": "quality",
+        "default": "arachne",
+        "help": "Arachne varies line width to fit thin walls (no gap-fill over-extrusion); Classic is fixed-width.",
+    },
+    {
+        "key": "z_hop",
+        "label": "Z-hop",
+        "input": "number",
+        "scope": "machine",
+        "binding": "per-slice",
+        "group": "advanced",
+        "unit": "mm",
+        "step": 0.1,
+        "default": 0.2,
+        "help": "Lifts the nozzle on travels so it clears printed walls/blobs instead of dragging.",
+    },
 ]
 
 
