@@ -590,12 +590,19 @@ def _update_chat_after_slice(chat_id: str, result: dict, gpath: object) -> None:
     if result.get("ok") and gpath:
         gname = Path(str(gpath)).name
         chat.status = "ready-to-print"
-        # Carry the per-height checkpoints baked into THIS g-code so the UI can show them on the
-        # slice (it can't trust the live editor state, which may have changed since slicing).
+        # Carry what was used for THIS slice so the UI can restore it on reopen (the live editor
+        # state is browser-session-only): the per-height checkpoints, and the slice settings +
+        # raw overrides (so e.g. a 3mm retraction the user set comes back, not the profile default).
         info = result.get("info")
-        cps = result.get("checkpoints")
-        if cps:
-            info = {**(info or {}), "checkpoints": cps}
+        extra: dict[str, object] = {}
+        if result.get("checkpoints"):
+            extra["checkpoints"] = result["checkpoints"]
+        if result.get("settings"):
+            extra["settings"] = result["settings"]
+        if result.get("raw_overrides"):
+            extra["raw"] = result["raw_overrides"]
+        if extra:
+            info = {**(info or {}), **extra}
         refs = [
             ArtifactRef(
                 kind="gcode",

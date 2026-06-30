@@ -15,6 +15,8 @@ import {
   isDirty,
   latestArtifact,
   sliceCheckpointsFrom,
+  sliceCheckpointsRequested,
+  sliceSettingsFrom,
   sliceStatsFrom,
   versioned,
 } from "@/lib/chat";
@@ -207,8 +209,11 @@ export function ChatWorkspace() {
       try {
         const chat = await api.getChat(id);
         setActive(chat);
-        // Restore the checkpoints baked into the last slice so the editor isn't empty on reopen.
-        setCheckpoints(sliceCheckpointsFrom(latestArtifact(chat, "gcode")));
+        // Restore the slice config the user set for the last slice so it isn't lost on reopen:
+        // the configured checkpoints (`requested`) + the slice-panel overrides (e.g. retraction).
+        const lastGcode = latestArtifact(chat, "gcode");
+        setCheckpoints(sliceCheckpointsRequested(lastGcode));
+        setSliceValues(sliceSettingsFrom(lastGcode));
         if (chat.printer_id) setPrinterId(chat.printer_id);
         if (chat.filament_id) setFilamentId(chat.filament_id);
         // Re-attach to an in-flight generation started before you navigated here.

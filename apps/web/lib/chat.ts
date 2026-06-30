@@ -118,12 +118,22 @@ export function checkpointSeed(
 }
 
 /** The checkpoints actually injected into a sliced g-code artifact (persisted in slice_info).
- *  Prefers `applied` (what really went into the g-code) over `requested`. */
+ *  Prefers `applied` (what really went into the g-code) over `requested` — for the viewer markers. */
 export function sliceCheckpointsFrom(ref: ArtifactRef | null): Checkpoint[] {
   const info = ref?.slice_info as { checkpoints?: { applied?: unknown; requested?: Checkpoint[] } } | undefined;
   const applied = info?.checkpoints?.applied;
   if (Array.isArray(applied)) return applied as Checkpoint[];
   return info?.checkpoints?.requested ?? [];
+}
+
+/** The checkpoints the user CONFIGURED for the last slice (requested) — for restoring the editor on
+ *  reopen, so their setup survives even if a checkpoint didn't inject (or the slice predates a fix). */
+export function sliceCheckpointsRequested(ref: ArtifactRef | null): Checkpoint[] {
+  const info = ref?.slice_info as { checkpoints?: { requested?: Checkpoint[]; applied?: unknown } } | undefined;
+  const requested = info?.checkpoints?.requested;
+  if (Array.isArray(requested)) return requested;
+  const applied = info?.checkpoints?.applied;
+  return Array.isArray(applied) ? (applied as Checkpoint[]) : [];
 }
 
 /** Short summary of what a checkpoint changes, e.g. "200°C · fan 100% · 60% speed". */
@@ -141,6 +151,16 @@ export function checkpointLabel(cp: Checkpoint): string {
 
 /** Distinct marker colours for checkpoints, by index (cycles). */
 export const CHECKPOINT_COLORS = ["#f59e0b", "#22d3ee", "#a78bfa", "#ec4899", "#34d399", "#fb7185"];
+
+/** The slice settings used for the last slice (persisted in slice_info) → restore the panel on
+ *  reopen, so an override the user set (e.g. a 3mm retraction) comes back instead of the default. */
+export function sliceSettingsFrom(ref: ArtifactRef | null): Record<string, unknown> {
+  const info = ref?.slice_info as { settings?: Record<string, unknown>; raw?: Record<string, string> } | undefined;
+  const out: Record<string, unknown> =
+    info?.settings && typeof info.settings === "object" ? { ...info.settings } : {};
+  if (info?.raw && typeof info.raw === "object" && Object.keys(info.raw).length) out.raw = info.raw;
+  return out;
+}
 
 /** Shallow value-equality of two SliceSettings-shaped maps (ignores `raw`, treats null≈absent). */
 export function sameSettings(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
