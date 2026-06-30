@@ -73,6 +73,8 @@ class SliceSettings(BaseModel):
     support: bool | None = None
     support_threshold: int | None = Field(default=None, ge=0, le=90)
     retraction_length: float | None = Field(default=None, ge=0, le=6)
+    wall_generator: Literal["arachne", "classic"] | None = None
+    z_hop: float | None = Field(default=None, ge=0, le=5)
     checkpoints: list[Checkpoint] | None = None  # per-height setting changes (post-slice)
     raw: dict[str, str] | None = Field(
         default=None, description="Advanced: arbitrary OrcaSlicer key→value overrides."

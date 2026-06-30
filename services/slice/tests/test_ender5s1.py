@@ -60,6 +60,12 @@ def test_slice_overrides_phase2_knobs() -> None:
     assert ov["machine"]["retraction_length"] == ["1"]
 
 
+def test_slice_overrides_wall_generator_and_zhop() -> None:
+    ov = slice_overrides(wall_generator="arachne", z_hop=0.4)
+    assert ov["process"]["wall_generator"] == "arachne"  # process scope
+    assert ov["machine"]["z_hop"] == ["0.4"]  # machine scope, per-extruder array
+
+
 def test_slice_overrides_brim_zero_is_off() -> None:
     # brim_width 0 must turn the brim OFF, not leave "auto_brim" (which can still add one).
     ov = slice_overrides(brim_width=0)
